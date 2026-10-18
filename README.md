@@ -39,6 +39,9 @@ Ekolayzer her açılışta GitHub'daki son sürümü denetler: oturum açılış
 
 - **Güncelle**: paket indirilir, SHA-256 özeti doğrulanır ve sistem parola penceresinden (polkit) onay alınarak kurulur. Ses motoru yeni sürümle kendiliğinden yeniden başlar.
 - **Sonra**: bir sonraki açılışta yeniden sorulur.
+- **Tekrar gösterme** kutusu işaretlenirse o sürüm için açılışta popup çıkmaz; daha yeni bir sürüm yayımlanınca yeniden sorulur.
+
+Güncelleme olduğu sürece ana pencerenin sol alt köşesinde **Güncelle** düğmesi görünür; tıklayınca güncelleme doğrudan indirilip kurulur.
 
 Güncelleme yoksa denetim yaklaşık 0,3 saniyede, arayüz yüklenmeden biter. Menüdeki **Güncellemeleri denetle** ile elle de denetleyebilirsin. Kurulum yardımcısı yalnızca `ekolayzer` adlı ve yüklü sürümden yeni bir paketi kabul eder; eski sürüme düşürmeye izin vermez.
 
