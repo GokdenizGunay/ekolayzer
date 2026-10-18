@@ -1,0 +1,55 @@
+#!/bin/sh
+set -e
+
+APP=io.github.ekolayzer
+SRC=/usr/share/applications/$APP.desktop
+
+for_each_session() {
+    # Oturumu açık kullanıcıların oturum ortamında komut çalıştırır.
+    for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+        [ "$uid" -ge 1000 ] 2>/dev/null || continue
+        user=$(getent passwd "$uid" | cut -d: -f1)
+        home=$(getent passwd "$uid" | cut -d: -f6)
+        [ -n "$user" ] && [ -S "/run/user/$uid/bus" ] || continue
+        runuser -u "$user" -- env HOME="$home" XDG_RUNTIME_DIR="/run/user/$uid" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+            "$@" >/dev/null 2>&1 || true
+    done
+}
+
+add_desktop_shortcuts() {
+    # Tüm kullanıcıların masaüstüne kısayol ekler (oturum açık olmasa da).
+    getent passwd | while IFS=: read -r user _ uid gid _ home _; do
+        [ "$uid" -ge 1000 ] 2>/dev/null && [ "$uid" -lt 60000 ] && [ -d "$home" ] || continue
+        desk=$(runuser -u "$user" -- env HOME="$home" xdg-user-dir DESKTOP 2>/dev/null || true)
+        [ -n "$desk" ] && [ "$desk" != "$home" ] && [ -d "$desk" ] || continue
+        install -m 755 -o "$uid" -g "$gid" "$SRC" "$desk/$APP.desktop" || continue
+        install -d -m 755 -o "$uid" -g "$gid" "$home/.config" "$home/.config/ekolayzer" || continue
+        install -m 644 -o "$uid" -g "$gid" /dev/null "$home/.config/ekolayzer/desktop-shortcut-created" || true
+    done
+}
+
+case "$1" in
+    configure)
+        systemctl --global enable ekolayzer.service >/dev/null 2>&1 || true
+        if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database -q /usr/share/applications || true
+        fi
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            gtk-update-icon-cache -q -f /usr/share/icons/hicolor || true
+        fi
+        # Arayüzün hızlı açılması için Python modüllerini önceden derle
+        python3 -m compileall -q /usr/lib/ekolayzer >/dev/null 2>&1 || true
+        for_each_session systemctl --user daemon-reload
+        for_each_session systemctl --user restart ekolayzer.service
+
+        # Kısayol yalnızca ilk kurulumda (ve hatalı 1.0.0'dan yükseltmede) eklenir;
+        # sonraki güncellemelerde kullanıcının sildiği kısayol geri gelmez.
+        if [ -z "$2" ] || dpkg --compare-versions "$2" lt 1.1.0; then
+            add_desktop_shortcuts
+        fi
+        # Açık oturumlarda kısayolu "güvenilir" işaretle (diğerleri girişte autostart ile).
+        for_each_session /usr/lib/ekolayzer/ekolayzer-shortcut
+        ;;
+esac
+exit 0

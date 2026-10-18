@@ -1,0 +1,37 @@
+#!/bin/sh
+set -e
+
+for_each_user() {
+    for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+        [ "$uid" -ge 1000 ] 2>/dev/null || continue
+        user=$(getent passwd "$uid" | cut -d: -f1)
+        [ -n "$user" ] && [ -S "/run/user/$uid/bus" ] || continue
+        runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+            "$@" >/dev/null 2>&1 || true
+    done
+}
+
+remove_shortcuts() {
+    # Tüm kullanıcıların masaüstündeki Ekolayzer kısayolunu kaldırır.
+    getent passwd | while IFS=: read -r user _ uid _ _ home _; do
+        [ "$uid" -ge 1000 ] 2>/dev/null && [ -d "$home" ] || continue
+        desk=$(runuser -u "$user" -- env HOME="$home" xdg-user-dir DESKTOP 2>/dev/null || true)
+        for d in "$desk" "$home/Desktop" "$home/Masaüstü"; do
+            [ -n "$d" ] && rm -f "$d/io.github.ekolayzer.desktop"
+        done
+        rm -f "$home/.config/ekolayzer/desktop-shortcut-created"
+    done
+}
+
+# Önceden derlenmiş Python dosyalarını temizle (her durumda; yükseltmede postinst yeniden üretir)
+rm -rf /usr/lib/ekolayzer/__pycache__
+
+case "$1" in
+    remove|deconfigure)
+        for_each_user systemctl --user stop ekolayzer.service
+        systemctl --global disable ekolayzer.service >/dev/null 2>&1 || true
+        remove_shortcuts
+        ;;
+esac
+exit 0

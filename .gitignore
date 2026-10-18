@@ -1,0 +1,6 @@
+# Derleme çıktıları
+build/
+*.deb
+*.so
+__pycache__/
+*.pyc

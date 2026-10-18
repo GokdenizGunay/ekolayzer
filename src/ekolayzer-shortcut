@@ -1,0 +1,23 @@
+#!/bin/sh
+# Oturum açılışında çalışır (/etc/xdg/autostart):
+#  - masaüstündeki Ekolayzer kısayolunu GNOME için "güvenilir" işaretler,
+#  - kurulumdan sonra oluşturulmuş yeni kullanıcılara kısayolu bir kez ekler.
+# Kullanıcı kısayolu silerse geri getirilmez (--force ile yeniden eklenir).
+SRC=/usr/share/applications/io.github.ekolayzer.desktop
+NAME=io.github.ekolayzer.desktop
+MARK="${XDG_CONFIG_HOME:-$HOME/.config}/ekolayzer/desktop-shortcut-created"
+
+[ -f "$SRC" ] || exit 0
+DESK=$(xdg-user-dir DESKTOP 2>/dev/null)
+[ -n "$DESK" ] || DESK="$HOME/Desktop"
+[ "$DESK" != "$HOME" ] || exit 0
+
+if [ ! -e "$DESK/$NAME" ]; then
+    [ "$1" = "--force" ] || [ ! -e "$MARK" ] || exit 0
+    mkdir -p "$DESK" && cp "$SRC" "$DESK/$NAME" || exit 0
+fi
+chmod 755 "$DESK/$NAME" 2>/dev/null || true
+gio set "$DESK/$NAME" metadata::trusted true >/dev/null 2>&1 || true
+
+mkdir -p "$(dirname "$MARK")" && touch "$MARK"
+exit 0

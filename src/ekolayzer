@@ -1,0 +1,5 @@
+#!/usr/bin/python3
+import sys
+sys.path.insert(0, "/usr/lib/ekolayzer")
+from ekolayzer_gui import main
+sys.exit(main())

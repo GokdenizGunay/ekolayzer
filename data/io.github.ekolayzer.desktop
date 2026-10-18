@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Ekolayzer
+Name[en]=Equalizer
+GenericName=Ses Ekolayzeri
+GenericName[en]=Audio Equalizer
+Comment=Tüm ses çıkışına uygulanan 10 bantlı ekolayzer
+Comment[en]=System-wide 10-band equalizer for all audio output
+Exec=ekolayzer
+Icon=ekolayzer
+Terminal=false
+Categories=AudioVideo;Audio;Settings;GTK;
+Keywords=ekolayzer;equalizer;eq;ses;bas;tiz;audio;sound;pipewire;
+StartupNotify=true

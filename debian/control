@@ -1,0 +1,17 @@
+Package: ekolayzer
+Version: @VERSION@
+Section: sound
+Priority: optional
+Architecture: @ARCH@
+Maintainer: Gökdeniz G.
+Depends: libc6 (>= 2.34), python3 (>= 3.9), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1 (>= 1.5), pipewire (>= 1.0), pipewire-bin, libpipewire-0.3-modules, wireplumber (>= 0.5), pipewire-pulse, libglib2.0-bin
+Recommends: pulseaudio-utils, xdg-user-dirs
+Installed-Size: @SIZE@
+Description: Pardus için sistem geneli ses ekolayzeri ve limiter
+ Ekolayzer, PipeWire filter-chain ve WirePlumber "smart filter" altyapısını
+ kullanarak tüm uygulamaların ses çıkışına uygulanan 10 bantlı (31 Hz - 16 kHz)
+ bir ekolayzer ve stereo bağlı, ileri bakışlı bir limiter sunar. Eşik, oran,
+ diz, atak, bırakma ve tavan döner düğmelerle ayarlanır; çıkış seviyesi ve
+ kazanç azaltma göstergeleri paylaşılan bellekten gerçek zamanlı okunur.
+ Ayar değişiklikleri sesi kesmeden anında uygulanır; ses motoru her oturum
+ açılışında arka planda otomatik başlar.

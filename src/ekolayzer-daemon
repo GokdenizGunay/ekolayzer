@@ -1,0 +1,24 @@
+#!/usr/bin/python3
+"""Kullanıcı ayarlarından filter-chain yapılandırmasını üretip PipeWire filtresini başlatır."""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import ekolayzer_core as core  # noqa: E402
+
+
+def main():
+    s = core.load_settings()
+    if not s["enabled"]:
+        print("Ekolayzer devre dışı; filtre başlatılmadı.")
+        return 0
+    os.makedirs(core.runtime_dir(), exist_ok=True)
+    conf = os.path.join(core.runtime_dir(), "filter-chain.conf")
+    with open(conf, "w", encoding="utf-8") as f:
+        f.write(core.build_filter_chain_conf(s))
+    os.execvp("pipewire", ["pipewire", "-c", conf])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

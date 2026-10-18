@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Ekolayzer masaüstü kısayolu
+Exec=/usr/lib/ekolayzer/ekolayzer-shortcut
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Phase=Applications
