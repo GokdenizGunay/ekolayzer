@@ -20,7 +20,7 @@ Pardus için sistem geneli ses ekolayzeri ve limiter. Tüm uygulamaların ses ç
 [Releases](../../releases) sayfasından son `ekolayzer_<sürüm>_amd64.deb` dosyasını indir, sonra çift tıklayıp Pardus Paket Kurucu ile kur ya da terminalde şunu çalıştır:
 
 ```bash
-sudo apt install ./ekolayzer_1.2.1_amd64.deb
+sudo apt install ./ekolayzer_1.3.0_amd64.deb
 ```
 
 Pardus 25 GNOME'da gereken her şey sistemde zaten kurulu olduğundan **internet bağlantısı gerekmez**.
@@ -32,6 +32,15 @@ Kurulumdan sonra ses motoru hemen devreye girer. Masaüstündeki veya uygulama m
 - Pardus 25 (veya Debian 13 tabanlı bir dağıtım), amd64
 - PipeWire ≥ 1.0 ve WirePlumber ≥ 0.5
 - GTK 4 ve libadwaita ≥ 1.5 (`gir1.2-gtk-4.0`, `gir1.2-adw-1`)
+
+### Otomatik güncelleme
+
+Ekolayzer her açılışta GitHub'daki son sürümü denetler: oturum açılışında arka planda, uygulama elle açıldığında ve kurulum/güncelleme sonrasında. Daha yeni bir sürüm varsa, ana pencere kapalı olsa bile bir popup çıkar:
+
+- **Güncelle**: paket indirilir, SHA-256 özeti doğrulanır ve sistem parola penceresinden (polkit) onay alınarak kurulur. Ses motoru yeni sürümle kendiliğinden yeniden başlar.
+- **Sonra**: bir sonraki açılışta yeniden sorulur.
+
+Güncelleme yoksa denetim yaklaşık 0,3 saniyede, arayüz yüklenmeden biter. Menüdeki **Güncellemeleri denetle** ile elle de denetleyebilirsin. Kurulum yardımcısı yalnızca `ekolayzer` adlı ve yüklü sürümden yeni bir paketi kabul eder; eski sürüme düşürmeye izin vermez.
 
 ## Kullanım
 

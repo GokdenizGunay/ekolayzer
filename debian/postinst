@@ -50,6 +50,9 @@ case "$1" in
         fi
         # Açık oturumlarda kısayolu "güvenilir" işaretle (diğerleri girişte autostart ile).
         for_each_session /usr/lib/ekolayzer/ekolayzer-shortcut
+        # Açık oturumlarda güncelleme denetimi (yeni sürüm varsa popup çıkar).
+        # systemd-run, oturumun ekran değişkenleriyle ve paket yöneticisinden bağımsız çalıştırır.
+        for_each_session systemd-run --user --collect --quiet /usr/bin/ekolayzer --check-update
         ;;
 esac
 exit 0

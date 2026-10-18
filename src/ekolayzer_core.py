@@ -5,6 +5,7 @@ import math
 import os
 import subprocess
 
+VERSION = "1.3.0"
 APP_ID = "io.github.ekolayzer"
 NODE_NAME = "ekolayzer"
 CAPTURE_NODE = "effect_input." + NODE_NAME

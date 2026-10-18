@@ -3,7 +3,7 @@
 # Gerekenler: gcc, libc6-dev, dpkg-deb (yalnızca derleme için; kurulumda gerekmez)
 set -e
 cd "$(dirname "$0")"
-VERSION=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' src/ekolayzer_gui.py)
+VERSION=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' src/ekolayzer_core.py)
 ARCH=$(dpkg --print-architecture)
 PKG=build/ekolayzer
 rm -rf build && mkdir -p "$PKG/DEBIAN" && chmod 755 "$PKG"
@@ -17,6 +17,10 @@ install -Dm755 src/ekolayzer               "$PKG/usr/bin/ekolayzer"
 install -Dm644 src/ekolayzer_core.py       "$PKG/usr/lib/ekolayzer/ekolayzer_core.py"
 install -Dm644 src/ekolayzer_gui.py        "$PKG/usr/lib/ekolayzer/ekolayzer_gui.py"
 install -Dm644 src/ekolayzer_widgets.py    "$PKG/usr/lib/ekolayzer/ekolayzer_widgets.py"
+install -Dm644 src/ekolayzer_update.py     "$PKG/usr/lib/ekolayzer/ekolayzer_update.py"
+install -Dm755 src/ekolayzer-update-install "$PKG/usr/lib/ekolayzer/ekolayzer-update-install"
+install -Dm644 data/io.github.ekolayzer.update.policy "$PKG/usr/share/polkit-1/actions/io.github.ekolayzer.update.policy"
+install -Dm644 data/io.github.ekolayzer.update-check.desktop "$PKG/etc/xdg/autostart/io.github.ekolayzer.update-check.desktop"
 install -Dm644 build/ekolayzer_dyn.so      "$PKG/usr/lib/ekolayzer/ekolayzer_dyn.so"
 install -Dm755 src/ekolayzer-daemon        "$PKG/usr/lib/ekolayzer/ekolayzer-daemon"
 install -Dm755 src/ekolayzer-shortcut      "$PKG/usr/lib/ekolayzer/ekolayzer-shortcut"

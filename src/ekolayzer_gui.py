@@ -1,5 +1,6 @@
 """Ekolayzer grafik arayüzü (GTK4 + libadwaita)."""
 
+import json
 import math
 import os
 import sys
@@ -16,9 +17,10 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 import ekolayzer_core as core  # noqa: E402
+import ekolayzer_update as upd  # noqa: E402
 import ekolayzer_widgets as wdg  # noqa: E402
 
-VERSION = "1.2.1"
+VERSION = core.VERSION
 CUSTOM = "Özel"
 METER_FPS = int(os.environ.get("EKOLAYZER_METER_FPS", "30"))  # gösterge yenileme hızı
 
@@ -244,6 +246,7 @@ class EqWindow(Adw.ApplicationWindow):
 
     def _build_menu(self):
         m = Gio.Menu()
+        m.append("Güncellemeleri denetle", "app.check-update")
         m.append("Hakkında", "app.about")
         m.append("Çıkış", "app.quit")
         return m
@@ -568,20 +571,184 @@ class EqWindow(Adw.ApplicationWindow):
         threading.Thread(target=work, daemon=True).start()
 
 
+class UpdateFlow:
+    """Güncelleme popup'ı: bildir → indir ve doğrula → polkit ile kur → sonuç."""
+
+    def __init__(self, app, info):
+        self.app, self.info = app, info
+        self._pulse = 0
+
+    def parent(self):
+        w = self.app.win
+        return w if w is not None and w.get_visible() else None
+
+    def start(self):
+        info = self.info
+        lines = ["Ekolayzer <b>%s</b> yayımlandı. Yüklü sürüm: %s." % (
+            GLib.markup_escape_text(info["version"]), GLib.markup_escape_text(info["current"]))]
+        if info.get("summary"):
+            lines.append("")
+            lines.append("<b>Yenilikler</b>")
+            lines += ["• " + GLib.markup_escape_text(x) for x in info["summary"]]
+        dlg = Adw.AlertDialog(heading="Ekolayzer güncellemesi var", body="\n".join(lines),
+                              body_use_markup=True)
+        dlg.add_response("later", "Sonra")
+        if info.get("asset_url"):
+            dlg.add_response("update", "Güncelle")
+            dlg.set_response_appearance("update", Adw.ResponseAppearance.SUGGESTED)
+            dlg.set_default_response("update")
+        else:
+            dlg.add_response("page", "Sürüm sayfasını aç")
+            dlg.set_default_response("page")
+        dlg.set_close_response("later")
+        dlg.connect("response", self._on_response)
+        dlg.present(self.parent())
+
+    def _on_response(self, _dlg, resp):
+        if resp == "update":
+            self._run_update()
+            return
+        if resp == "page":
+            Gtk.UriLauncher.new(self.info["page"]).launch(self.parent(), None, None, None)
+        self.app.update_finished()
+
+    def _run_update(self):
+        self.prog = Gtk.ProgressBar()
+        self.pdlg = Adw.AlertDialog(heading="Ekolayzer güncelleniyor",
+                                    body="Ekolayzer %s indiriliyor…" % self.info["version"],
+                                    extra_child=self.prog)
+        self.pdlg.set_can_close(False)
+        self.pdlg.present(self.parent())
+        threading.Thread(target=self._work, daemon=True).start()
+
+    def _work(self):
+        try:
+            path = upd.download(self.info, progress=lambda f: GLib.idle_add(self.prog.set_fraction, f))
+        except (upd.NetworkError, ValueError, OSError) as e:
+            GLib.idle_add(self._done, False, "Paket indirilemedi: %s" % e)
+            return
+        GLib.idle_add(self._installing)
+        ok, msg = upd.install(path)
+        GLib.idle_add(self._done, ok, msg)
+
+    def _installing(self):
+        self.pdlg.set_body("Kuruluyor… Açılan sistem penceresinde parolanı gir.")
+        self._pulse = GLib.timeout_add(120, lambda: (self.prog.pulse(), True)[1])
+        return False
+
+    def _done(self, ok, msg):
+        if self._pulse:
+            GLib.source_remove(self._pulse)
+            self._pulse = 0
+        self.pdlg.force_close()
+        gui_open = self.parent() is not None
+        if ok:
+            body = "Ekolayzer %s kuruldu; ses motoru yeni sürümle çalışıyor." % self.info["version"]
+            if gui_open:
+                body += "\n\nYeni arayüzü kullanmak için uygulamayı yeniden başlat."
+            dlg = Adw.AlertDialog(heading="Güncelleme tamamlandı", body=body)
+            if gui_open:
+                dlg.add_response("later", "Sonra")
+                dlg.add_response("restart", "Yeniden başlat")
+                dlg.set_response_appearance("restart", Adw.ResponseAppearance.SUGGESTED)
+                dlg.set_default_response("restart")
+                dlg.set_close_response("later")
+            else:
+                dlg.add_response("ok", "Tamam")
+        else:
+            dlg = Adw.AlertDialog(heading="Güncelleme kurulamadı", body=msg)
+            dlg.add_response("ok", "Tamam")
+            dlg.add_response("page", "Sürüm sayfasını aç")
+            dlg.set_close_response("ok")
+        dlg.connect("response", self._on_result)
+        dlg.present(self.parent())
+        return False
+
+    def _on_result(self, _dlg, resp):
+        if resp == "restart":
+            self.app.restart()
+            return
+        if resp == "page":
+            Gtk.UriLauncher.new(self.info["page"]).launch(self.parent(), None, None, None)
+        self.app.update_finished()
+
+
 class EqApp(Adw.Application):
     def __init__(self):
-        super().__init__(application_id=core.APP_ID)
+        super().__init__(application_id=core.APP_ID,
+                         flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
         self.win = None
-        for name, cb in (("about", self._about), ("quit", lambda *_: self.quit())):
+        self._update_busy = False
+        for name, cb in (("about", self._about), ("quit", lambda *_: self.quit()),
+                         ("check-update", lambda *_: self.check_updates(manual=True))):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", cb)
             self.add_action(act)
         self.set_accels_for_action("app.quit", ["<Control>q"])
 
+    def do_command_line(self, cmdline):
+        info = None
+        for arg in cmdline.get_arguments()[1:]:
+            if arg.startswith("--update-info="):
+                try:
+                    info = json.loads(arg.split("=", 1)[1])
+                except ValueError:
+                    info = None
+        if info:
+            # Arka plan denetimi yeni sürüm buldu: ana pencere açılmadan popup göster
+            self.show_update(info)
+        else:
+            self.activate()
+        return 0
+
     def do_activate(self):
-        if not self.win:
+        first = self.win is None
+        if first:
             self.win = EqWindow(self)
         self.win.present()
+        if first:
+            self.check_updates()
+
+    # ------------------------------------------------------------ güncelleme
+
+    def check_updates(self, manual=False):
+        if self._update_busy:
+            return
+
+        def work():
+            try:
+                info, err = upd.check(), None
+            except upd.NetworkError as e:
+                info, err = None, e
+            GLib.idle_add(done, info, err)
+
+        def done(info, err):
+            if info:
+                self.show_update(info)
+            elif manual and self.win:
+                txt = ("Güncelleme sunucusuna ulaşılamadı." if err else
+                       "Ekolayzer güncel (%s)." % VERSION)
+                self.win.toast.add_toast(Adw.Toast(title=txt))
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def show_update(self, info):
+        if self._update_busy:
+            return
+        self._update_busy = True
+        self.hold()  # ana pencere yokken de popup kapanana kadar uygulama açık kalsın
+        UpdateFlow(self, info).start()
+
+    def update_finished(self):
+        if self._update_busy:
+            self._update_busy = False
+            self.release()
+
+    def restart(self):
+        if self.win:
+            self.win.shutdown()
+        os.execv(sys.executable, [sys.executable, os.path.abspath(sys.argv[0])])
 
     def do_shutdown(self):
         if self.win:
@@ -595,6 +762,8 @@ class EqApp(Adw.Application):
             version=VERSION,
             developer_name="Gökdeniz G.",
             copyright="© 2026 Gökdeniz G.",
+            website="https://github.com/%s" % upd.REPO,
+            issue_url="https://github.com/%s/issues" % upd.REPO,
             comments="PipeWire tabanlı, sistem geneli 10 bantlı ekolayzer ve limiter.\n"
                      "Tüm uygulamaların ses çıkışına uygulanır.",
             license_type=Gtk.License.GPL_3_0,
@@ -602,5 +771,8 @@ class EqApp(Adw.Application):
         about.present(self.win)
 
 
-def main():
-    return EqApp().run(sys.argv)
+def main(argv=None):
+    # Ana pencere olmadan açılan popup'lar da masaüstüne doğru uygulama kimliğini (ve simgeyi) bildirsin
+    GLib.set_prgname(core.APP_ID)
+    Gtk.Window.set_default_icon_name("ekolayzer")
+    return EqApp().run(argv if argv is not None else sys.argv)

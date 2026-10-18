@@ -1,5 +1,30 @@
 #!/usr/bin/python3
+import os
 import sys
-sys.path.insert(0, "/usr/lib/ekolayzer")
-from ekolayzer_gui import main
+
+sys.path.insert(0, os.environ.get("EKOLAYZER_LIBDIR", "/usr/lib/ekolayzer"))
+
+
+def main():
+    argv = sys.argv
+    if "--check-update" in argv[1:]:
+        # Arka plan denetimi: güncelleme yoksa GTK hiç yüklenmeden çık
+        import json
+        import time
+        import ekolayzer_update as up
+        info = None
+        for attempt in range(4):
+            try:
+                info = up.check()
+                break
+            except up.NetworkError:
+                if attempt < 3:
+                    time.sleep(15)  # oturum açılışında ağ henüz hazır olmayabilir
+        if not info:
+            return 0
+        argv = [argv[0], "--update-info=" + json.dumps(info)]
+    from ekolayzer_gui import main as gui_main
+    return gui_main(argv)
+
+
 sys.exit(main())

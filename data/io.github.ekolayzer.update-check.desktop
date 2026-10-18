@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Ekolayzer güncelleme denetimi
+Exec=/usr/bin/ekolayzer --check-update
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Phase=Applications
+X-GNOME-Autostart-Delay=8
