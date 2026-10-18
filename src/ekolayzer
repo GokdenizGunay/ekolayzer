@@ -22,6 +22,9 @@ def main():
                     time.sleep(15)  # oturum açılışında ağ henüz hazır olmayabilir
         if not info:
             return 0
+        import ekolayzer_core as core
+        if core.load_settings().get("update_skip") == info["version"]:
+            return 0  # kullanıcı bu sürüm için "Tekrar gösterme" dedi
         argv = [argv[0], "--update-info=" + json.dumps(info)]
     from ekolayzer_gui import main as gui_main
     return gui_main(argv)

@@ -220,6 +220,12 @@ class EqWindow(Adw.ApplicationWindow):
         root.append(sliders)
 
         bottom = Gtk.Box(spacing=8)
+        self.update_btn = Gtk.Button(visible=False, valign=Gtk.Align.CENTER,
+                                     css_classes=["suggested-action", "pill"])
+        self.update_btn.set_child(Adw.ButtonContent(icon_name="software-update-available-symbolic",
+                                                    label="Güncelle"))
+        self.update_btn.set_action_name("app.update")
+        bottom.append(self.update_btn)
         self.status = Gtk.Label(xalign=0, css_classes=["dim-label", "caption"], wrap=True, hexpand=True)
         bottom.append(self.status)
         bottom.append(Gtk.Label(label="Limiter", css_classes=["caption-heading"]))
@@ -592,6 +598,10 @@ class UpdateFlow:
             lines += ["• " + GLib.markup_escape_text(x) for x in info["summary"]]
         dlg = Adw.AlertDialog(heading="Ekolayzer güncellemesi var", body="\n".join(lines),
                               body_use_markup=True)
+        self.dont_show = Gtk.CheckButton(label="Tekrar gösterme", halign=Gtk.Align.CENTER)
+        self.dont_show.set_tooltip_text("Bu sürüm için açılışta popup gösterilmez; "
+                                        "güncelleme düğmesi pencerede görünmeye devam eder.")
+        dlg.set_extra_child(self.dont_show)
         dlg.add_response("later", "Sonra")
         if info.get("asset_url"):
             dlg.add_response("update", "Güncelle")
@@ -608,9 +618,14 @@ class UpdateFlow:
         if resp == "update":
             self._run_update()
             return
+        if self.dont_show.get_active():
+            self.app.skip_version(self.info["version"])
         if resp == "page":
             Gtk.UriLauncher.new(self.info["page"]).launch(self.parent(), None, None, None)
         self.app.update_finished()
+
+    def run_direct(self):
+        self._run_update()
 
     def _run_update(self):
         self.prog = Gtk.ProgressBar()
@@ -643,6 +658,7 @@ class UpdateFlow:
         self.pdlg.force_close()
         gui_open = self.parent() is not None
         if ok:
+            self.app.set_update_info(None)
             body = "Ekolayzer %s kuruldu; ses motoru yeni sürümle çalışıyor." % self.info["version"]
             if gui_open:
                 body += "\n\nYeni arayüzü kullanmak için uygulamayı yeniden başlat."
@@ -679,8 +695,10 @@ class EqApp(Adw.Application):
                          flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
         self.win = None
         self._update_busy = False
+        self.update_info = None  # bilinen en yeni sürüm (sol alttaki düğme için)
         for name, cb in (("about", self._about), ("quit", lambda *_: self.quit()),
-                         ("check-update", lambda *_: self.check_updates(manual=True))):
+                         ("check-update", lambda *_: self.check_updates(manual=True)),
+                         ("update", lambda *_: self.start_update())):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", cb)
             self.add_action(act)
@@ -696,6 +714,7 @@ class EqApp(Adw.Application):
                     info = None
         if info:
             # Arka plan denetimi yeni sürüm buldu: ana pencere açılmadan popup göster
+            self.set_update_info(info)
             self.show_update(info)
         else:
             self.activate()
@@ -705,6 +724,7 @@ class EqApp(Adw.Application):
         first = self.win is None
         if first:
             self.win = EqWindow(self)
+            self.set_update_info(self.update_info)
         self.win.present()
         if first:
             self.check_updates()
@@ -724,7 +744,10 @@ class EqApp(Adw.Application):
 
         def done(info, err):
             if info:
-                self.show_update(info)
+                self.set_update_info(info)
+                # "Tekrar gösterme" denmiş sürüm için açılışta popup yok; menüden denetimde her zaman göster
+                if manual or self._skipped() != info["version"]:
+                    self.show_update(info)
             elif manual and self.win:
                 txt = ("Güncelleme sunucusuna ulaşılamadı." if err else
                        "Ekolayzer güncel (%s)." % VERSION)
@@ -739,6 +762,41 @@ class EqApp(Adw.Application):
         self._update_busy = True
         self.hold()  # ana pencere yokken de popup kapanana kadar uygulama açık kalsın
         UpdateFlow(self, info).start()
+
+    def set_update_info(self, info):
+        self.update_info = info
+        if self.win:
+            btn = self.win.update_btn
+            btn.set_visible(info is not None)
+            if info:
+                btn.get_child().set_label("Güncelle (%s)" % info["version"])
+                btn.set_tooltip_text("Ekolayzer %s mevcut (yüklü: %s). Tıklayınca indirilip kurulur."
+                                     % (info["version"], info["current"]))
+
+    def start_update(self):
+        """Sol alttaki düğme: sormadan doğrudan indir ve kur."""
+        if self._update_busy or not self.update_info:
+            return
+        if not self.update_info.get("asset_url"):
+            Gtk.UriLauncher.new(self.update_info["page"]).launch(self.win, None, None, None)
+            return
+        self._update_busy = True
+        self.hold()
+        UpdateFlow(self, self.update_info).run_direct()
+
+    def _skipped(self):
+        if self.win:
+            return self.win.s.get("update_skip", "")
+        return core.load_settings().get("update_skip", "")
+
+    def skip_version(self, version):
+        if self.win:
+            self.win.s["update_skip"] = version
+            self.win._queue_save()
+        else:
+            s = core.load_settings()
+            s["update_skip"] = version
+            core.save_settings(s)
 
     def update_finished(self):
         if self._update_busy:

@@ -54,6 +54,7 @@ DEFAULT_SETTINGS = {
     "custom_presets": {},
     "limiter": dict({"enabled": True}, **{k: v[3] for k, v in LIMITER_PARAMS.items()}),
     "limiter_panel": False,
+    "update_skip": "",  # "Tekrar gösterme" ile atlanan sürüm
 }
 
 
@@ -95,6 +96,7 @@ def load_settings():
     s["preamp"] = clamp(float(s.get("preamp", 0.0)), GAIN_MIN, GAIN_MAX)
     s["enabled"] = bool(s.get("enabled", True))
     s["limiter_panel"] = bool(s.get("limiter_panel", False))
+    s["update_skip"] = s["update_skip"] if isinstance(s.get("update_skip"), str) else ""
     if not isinstance(s.get("custom_presets"), dict):
         s["custom_presets"] = {}
 
