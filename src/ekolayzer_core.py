@@ -3,9 +3,10 @@
 import json
 import math
 import os
+import re
 import subprocess
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 APP_ID = "io.github.ekolayzer"
 NODE_NAME = "ekolayzer"
 CAPTURE_NODE = "effect_input." + NODE_NAME
@@ -103,9 +104,7 @@ def load_settings():
     lim = dict(DEFAULT_SETTINGS["limiter"])
     if isinstance(s.get("limiter"), dict):
         lim.update(s["limiter"])
-    elif isinstance(data, dict) and "auto_headroom" in data:  # 1.1.0 ayarlarından geçiş
-        lim["enabled"] = bool(data["auto_headroom"])
-    lim["enabled"] = bool(lim.get("enabled", True))
+    lim["enabled"] = True  # limiter her zaman açık (eski ayar dosyalarındaki "kapalı" yok sayılır)
     for k, (_port, lo, hi, dflt) in LIMITER_PARAMS.items():
         try:
             lim[k] = clamp(float(lim.get(k, dflt)), lo, hi)
@@ -127,16 +126,37 @@ def save_settings(s):
 
 def _dyn_controls(s):
     lim = s["limiter"]
-    ctl = {"Gain": s["preamp"], "Enable": 1.0 if lim["enabled"] else 0.0}
+    ctl = {"Gain": s["preamp"], "Enable": 1.0}  # limiter her zaman açık
     for k, (port, _lo, _hi, _d) in LIMITER_PARAMS.items():
         ctl[port] = lim[k]
     return ctl
 
 
-def build_filter_chain_conf(s):
+def wireplumber_version():
+    """Kurulu WirePlumber sürümü (ör. (0, 5, 8)); bulunamazsa None."""
+    try:
+        out = subprocess.run(["wireplumber", "--version"], capture_output=True, text=True,
+                             timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"Linked with libwireplumber (\d+)\.(\d+)\.(\d+)", out) or \
+        re.search(r"(\d+)\.(\d+)\.(\d+)", out)
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def smart_filters_supported():
+    """WirePlumber 0.5+ "smart filter" desteği (Pardus 25 / ETAP 25). Yoksa (ETAP 23) klasik yönlendirme."""
+    v = wireplumber_version()
+    return v is None or v >= (0, 5, 0)
+
+
+def build_filter_chain_conf(s, legacy=False, target=None):
     """Ayarlardan bağımsız bir pipewire süreci için filter-chain yapılandırması üretir.
 
     Grafik: her kanal için 10 tepe (peaking) süzgeci -> stereo bağlı limiter (ön kazanç dahil).
+    legacy=False: WirePlumber 0.5 smart filter; filtre varsayılan çıkışın önüne kendiliğinden girer.
+    legacy=True : WirePlumber 0.4; filtre çıkışı `target` aygıtına bağlanır, filtre girişi
+                  denetleyici tarafından varsayılan çıkış yapılır.
     """
     nodes, links = [], []
     for ch in CHANNELS:
@@ -180,16 +200,13 @@ context.modules = [
             audio.position = [ FL FR ]
             capture.props = {
                 node.name         = "%(cap)s"
-                media.class       = Audio/Sink
-                filter.smart      = true
-                filter.smart.name = "%(name)s"
+                node.description  = "Ekolayzer"
+                media.class       = Audio/Sink%(cap_extra)s
             }
             playback.props = {
                 node.name         = "%(play)s"
                 node.passive      = true
-                stream.dont-remix = true
-                filter.smart      = true
-                filter.smart.name = "%(name)s"
+                stream.dont-remix = true%(play_extra)s
             }
         }
     }
@@ -199,27 +216,140 @@ context.modules = [
         "links": "".join(ind + l for l in links),
         "cap": CAPTURE_NODE,
         "play": PLAYBACK_NODE,
-        "name": NODE_NAME,
+        "cap_extra": _props_extra(legacy, None),
+        "play_extra": _props_extra(legacy, target),
     }
 
 
-def props_pod(s):
-    parts = []
+def _props_extra(legacy, target):
+    ind = "\n" + " " * 16
+    if not legacy:
+        return ind + "filter.smart      = true" + ind + 'filter.smart.name = "%s"' % NODE_NAME
+    if target:
+        t = target.replace('"', "")
+        return ind + 'target.object     = "%s"' % t + ind + 'node.target       = "%s"' % t
+    return ""
+
+
+# ---------------------------------------------------------------- Klasik (WirePlumber 0.4) yönlendirme
+
+def _pw_dump_nodes():
+    try:
+        out = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=10).stdout
+        return [o for o in json.loads(out or "[]") if o.get("type") == "PipeWire:Interface:Node"]
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+
+
+def node_id(name):
+    for o in _pw_dump_nodes():
+        if o.get("info", {}).get("props", {}).get("node.name") == name:
+            return o["id"]
+    return None
+
+
+def hardware_sinks():
+    """Ekolayzer dışındaki ses çıkış aygıtları: [(kimlik, ad, açıklama)]."""
+    res = []
+    for o in _pw_dump_nodes():
+        p = o.get("info", {}).get("props", {})
+        if p.get("media.class") == "Audio/Sink" and p.get("node.name") != CAPTURE_NODE:
+            res.append((o["id"], p.get("node.name"), p.get("node.description", "")))
+    return res
+
+
+def parse_metadata_name(value):
+    """'{"name":"alsa_output..."}' biçimindeki meta veri değerinden aygıt adı."""
+    m = re.search(r'"name"\s*:\s*"([^"]+)"', value or "")
+    return m.group(1) if m else None
+
+
+def get_default_sink():
+    try:
+        out = subprocess.run(["pw-metadata", "0", "default.audio.sink"], capture_output=True,
+                             text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"value:'([^']*)'", out)
+    return parse_metadata_name(m.group(1)) if m else None
+
+
+def set_default_sink(name):
+    """Varsayılan çıkışı ayarlar (WirePlumber bunu kalıcı tercih olarak da saklar)."""
+    try:
+        subprocess.run(["pw-metadata", "0", "default.configured.audio.sink",
+                        '{ "name": "%s" }' % name, "Spa:String:JSON"],
+                       capture_output=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def set_stream_target(node, target_name, target_id=None):
+    """Bir akışın bağlanacağı aygıtı değiştirir (WirePlumber 0.4 meta veri anahtarları)."""
+    cmds = [["pw-metadata", str(node), "target.object", target_name]]
+    if target_id is not None:
+        cmds.append(["pw-metadata", str(node), "target.node", str(target_id)])
+    for c in cmds:
+        try:
+            subprocess.run(c, capture_output=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
+def props_pairs(s):
+    """Filtreye gönderilecek (parametre adı, değer) çiftleri."""
+    pairs = []
     for i, g in enumerate(s["gains"], start=1):
         for ch in CHANNELS:
-            parts.append('"b%d%s:Gain" %.2f' % (i, ch, g))
-    parts += ['"dyn:%s" %.3f' % kv for kv in _dyn_controls(s).items()]
-    return "{ params = [ %s ] }" % " ".join(parts)
+            pairs.append(("b%d%s:Gain" % (i, ch), "%.2f" % g))
+    pairs += [("dyn:%s" % k, "%.3f" % v) for k, v in _dyn_controls(s).items()]
+    return pairs
 
 
-def apply_live(s):
-    """Çalışan filtrenin parametrelerini sesi kesmeden günceller (düğüm adıyla, kimlik araması yok)."""
+def props_pod(pairs):
+    return "{ params = [ %s ] }" % " ".join('"%s" %s' % kv for kv in pairs)
+
+
+# Eski pw-cli (PipeWire 0.3.x) tek komutta ~1 KB'tan büyük parametre paketini sessizce yok sayar;
+# bu yüzden yalnızca değişen değerler, en fazla PARAM_CHUNK'lık parçalar hâlinde gönderilir.
+PARAM_CHUNK = 10
+_sent = {}
+_node_id_cache = None
+
+
+def _set_param(target, pairs):
     try:
-        r = subprocess.run(["pw-cli", "set-param", CAPTURE_NODE, "Props", props_pod(s)],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=5)
-        return r.returncode == 0 and not r.stderr.strip()
+        r = subprocess.run(["pw-cli", "set-param", str(target), "Props", props_pod(pairs)],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return False
+    return r.returncode == 0 and not r.stderr.strip() and "rror" not in r.stdout
+
+
+def apply_live(s, full=False):
+    """Çalışan filtrenin parametrelerini sesi kesmeden günceller.
+
+    Yalnızca son gönderimden bu yana değişen parametreleri yollar. Önce düğüm adıyla dener;
+    pw-cli adı tanımazsa düğüm kimliğini bulup onunla dener.
+    """
+    global _node_id_cache
+    pairs = props_pairs(s)
+    todo = pairs if full or not _sent else [kv for kv in pairs if _sent.get(kv[0]) != kv[1]]
+    if not todo:
+        return True
+    for target in (CAPTURE_NODE, _node_id_cache, "lookup"):
+        if target is None:
+            continue
+        if target == "lookup":
+            _node_id_cache = node_id(CAPTURE_NODE)
+            if _node_id_cache is None:
+                break
+            target = _node_id_cache
+        if all(_set_param(target, todo[i:i + PARAM_CHUNK]) for i in range(0, len(todo), PARAM_CHUNK)):
+            _sent.update(todo)
+            return True
+    _sent.clear()  # durum bilinmiyor: bir sonraki çağrıda her şey yeniden gönderilsin
+    return False
 
 
 def systemctl(*args):
@@ -259,11 +389,3 @@ def response_db(freq, s, fs=SAMPLE_RATE):
         h = (b0 + b1 * z1 + b2 * z2) / (1 + a1 * z1 + a2 * z2)
         total += 20 * math.log10(max(abs(h), 1e-9))
     return total
-
-
-_GRID = sorted(set([20 * (1000 ** (i / 120)) for i in range(121)] + BAND_FREQS))
-
-
-def peak_gain(s):
-    """Ön kazanç dahil, herhangi bir frekanstaki en yüksek toplam kazanç (dB)."""
-    return max(response_db(f, s) for f in _GRID)

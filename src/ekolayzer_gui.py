@@ -1,4 +1,8 @@
-"""Ekolayzer grafik arayüzü (GTK4 + libadwaita)."""
+"""Ekolayzer grafik arayüzü (GTK3).
+
+GTK3 seçildi: Pardus 25 (GNOME/XFCE), Pardus ETAP 23/25 ve MEB sürümlerinin hepsinde
+hazır kurulu geldiği için paket her yerde internetsiz kurulabilir.
+"""
 
 import json
 import math
@@ -8,25 +12,64 @@ import threading
 
 import gi
 
-# Basit, çizim ağırlıklı bu arayüz için cairo çizicisi GL'den çok daha az CPU ve bellek kullanır
-# (ölçüm: ~130 MB daha az bellek). Kullanıcı GSK_RENDERER belirlediyse ona dokunulmaz.
-os.environ.setdefault("GSK_RENDERER", "cairo")
-
-gi.require_version("Gtk", "4.0")
-gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
 
 import ekolayzer_core as core  # noqa: E402
 import ekolayzer_update as upd  # noqa: E402
 import ekolayzer_widgets as wdg  # noqa: E402
+from ekolayzer_widgets import add_classes  # noqa: E402
 
 VERSION = core.VERSION
 CUSTOM = "Özel"
 METER_FPS = int(os.environ.get("EKOLAYZER_METER_FPS", "30"))  # gösterge yenileme hızı
 
+# İleti penceresi yanıtları
+R_LATER, R_UPDATE, R_PAGE, R_OK, R_RESTART, R_SAVE, R_CANCEL = range(1, 8)
+
 
 def freq_label(f):
     return "%dk" % (f // 1000) if f >= 1000 else str(f)
+
+
+def open_uri(parent, uri):
+    try:
+        Gtk.show_uri_on_window(parent, uri, Gdk.CURRENT_TIME)
+    except GLib.Error:
+        pass
+
+
+def message(app, parent, heading, body, buttons, default=None, extra=None, markup=False):
+    """Ana pencere olsun olmasın çalışan ileti penceresi.
+
+    buttons: [(etiket, yanıt, önerilen_mi), ...]. Pencere kapatılırsa yanıt R_LATER/R_OK gibi
+    'kapat' sayılan ilk düğmenin yanıtı olur.
+    """
+    dlg = Gtk.MessageDialog(transient_for=parent, modal=parent is not None,
+                            message_type=Gtk.MessageType.INFO, buttons=Gtk.ButtonsType.NONE,
+                            text=heading)
+    dlg.set_title("Ekolayzer")
+    dlg.set_icon_name("ekolayzer")
+    if markup:
+        dlg.format_secondary_markup(body)
+    else:
+        dlg.format_secondary_text(body)
+    for label, resp, suggested in buttons:
+        btn = dlg.add_button(label, resp)
+        if suggested:
+            add_classes(btn, "suggested-action")
+    if default is not None:
+        dlg.set_default_response(default)
+    if extra is not None:
+        extra.set_halign(Gtk.Align.CENTER)
+        dlg.get_message_area().pack_end(extra, False, False, 6)
+    if parent is None:
+        dlg.set_position(Gtk.WindowPosition.CENTER)
+        app.add_window(dlg)
+    dlg.show_all()
+    dlg.present()
+    return dlg
 
 
 class ResponseView(Gtk.DrawingArea):
@@ -37,9 +80,9 @@ class ResponseView(Gtk.DrawingArea):
     def __init__(self, get_settings):
         super().__init__()
         self.get_settings = get_settings
-        self.set_content_height(150)
+        self.set_size_request(-1, 150)
         self.set_hexpand(True)
-        self.set_draw_func(self._draw)
+        self.connect("draw", self._draw)
         self._freqs = []
         self._band_cache = {}
 
@@ -60,9 +103,9 @@ class ResponseView(Gtk.DrawingArea):
             self._band_cache[key] = c
         return c
 
-    def _draw(self, _area, cr, w, h):
-        fg = self.get_color()
-        accent = Adw.StyleManager.get_default().get_accent_color_rgba()
+    def _draw(self, _area, cr):
+        w, h = self.get_allocated_width(), self.get_allocated_height()
+        fg, accent = wdg.theme_colors(self)
         s = self.get_settings()
 
         cr.set_line_width(1)
@@ -107,6 +150,7 @@ class ResponseView(Gtk.DrawingArea):
         cr.set_line_width(2.5)
         cr.set_source_rgba(accent.red, accent.green, accent.blue, alpha)
         cr.stroke()
+        return False
 
 
 def _fmt_db(v):
@@ -132,109 +176,119 @@ KNOBS = (
 )
 
 
-class EqWindow(Adw.ApplicationWindow):
+def _icon_button(icon, tooltip):
+    b = Gtk.Button(tooltip_text=tooltip)
+    b.set_image(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.BUTTON))
+    return b
+
+
+class EqWindow(Gtk.ApplicationWindow):
+    BASE_W = 840
+
     def __init__(self, app):
         super().__init__(application=app, title="Ekolayzer")
+        self.app = app
         self.s = core.load_settings()
-        self.set_default_size(1080 if self.s["limiter_panel"] else 840, 600)
+        self.set_default_size(1080 if self.s["limiter_panel"] else self.BASE_W, 600)
+        self.set_icon_name("ekolayzer")
         self._apply_src = 0
         self._apply_busy = False
         self._apply_dirty = False
         self._save_src = 0
+        self._notice_src = 0
         self._updating = False
 
-        toolbar = Adw.ToolbarView()
-        header = Adw.HeaderBar()
-        toolbar.add_top_bar(header)
-
+        header = Gtk.HeaderBar(show_close_button=True, title="Ekolayzer")
+        self.set_titlebar(header)
         self.power = Gtk.Switch(valign=Gtk.Align.CENTER, active=self.s["enabled"])
         self.power.set_tooltip_text("Ekolayzeri aç / kapat")
         self.power.connect("notify::active", self._on_power)
         header.pack_start(self.power)
-
-        menu_btn = Gtk.MenuButton(icon_name="open-menu-symbolic", tooltip_text="Menü")
-        menu_btn.set_popover(Gtk.PopoverMenu.new_from_model(self._build_menu()))
+        menu_btn = Gtk.MenuButton(tooltip_text="Menü", menu_model=self._build_menu())
+        menu_btn.set_image(Gtk.Image.new_from_icon_name("open-menu-symbolic", Gtk.IconSize.BUTTON))
         header.pack_end(menu_btn)
 
-        self.toast = Adw.ToastOverlay()
-        toolbar.set_content(self.toast)
-        self.set_content(toolbar)
-
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
-                       margin_top=12, margin_bottom=16, margin_start=16, margin_end=16)
-        self.toast.set_child(root)
+        # İçerik + üstte beliren kısa bildirim şeridi
+        overlay = Gtk.Overlay()
+        self.add(overlay)
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12,
+                       margin_bottom=16, margin_start=16, margin_end=16)
+        overlay.add(root)
+        self.notice = Gtk.Revealer(halign=Gtk.Align.CENTER, valign=Gtk.Align.START,
+                                   transition_type=Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.notice_lbl = add_classes(Gtk.Label(wrap=True), "ekz-notice")
+        self.notice.add(self.notice_lbl)
+        overlay.add_overlay(self.notice)
+        overlay.set_overlay_pass_through(self.notice, True)
 
         # Ön ayar satırı
         row = Gtk.Box(spacing=8)
-        row.append(Gtk.Label(label="Ön ayar:", css_classes=["dim-label"]))
-        self.preset_model = Gtk.StringList()
-        self.preset_dd = Gtk.DropDown(model=self.preset_model, hexpand=True)
-        self.preset_dd.connect("notify::selected", self._on_preset_selected)
-        row.append(self.preset_dd)
-        save_btn = Gtk.Button(icon_name="document-save-symbolic", tooltip_text="Ön ayar olarak kaydet")
+        row.pack_start(add_classes(Gtk.Label(label="Ön ayar:"), "dim-label"), False, False, 0)
+        self.preset_cb = Gtk.ComboBoxText(hexpand=True)
+        self.preset_cb.connect("changed", self._on_preset_selected)
+        row.pack_start(self.preset_cb, True, True, 0)
+        save_btn = _icon_button("document-save-symbolic", "Ön ayar olarak kaydet")
         save_btn.connect("clicked", self._on_save_preset)
-        row.append(save_btn)
-        self.del_btn = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Özel ön ayarı sil")
+        row.pack_start(save_btn, False, False, 0)
+        self.del_btn = _icon_button("user-trash-symbolic", "Özel ön ayarı sil")
         self.del_btn.connect("clicked", self._on_delete_preset)
-        row.append(self.del_btn)
-        reset_btn = Gtk.Button(icon_name="edit-undo-symbolic", tooltip_text="Düz ayara sıfırla")
+        row.pack_start(self.del_btn, False, False, 0)
+        reset_btn = _icon_button("edit-undo-symbolic", "Düz ayara sıfırla")
         reset_btn.connect("clicked", lambda *_: self._select_preset("Düz"))
-        row.append(reset_btn)
-        root.append(row)
+        row.pack_start(reset_btn, False, False, 0)
+        root.pack_start(row, False, False, 0)
 
         # Frekans yanıtı
-        frame = Gtk.Frame(css_classes=["view"])
+        frame = Gtk.Frame()
         self.curve = ResponseView(lambda: self.s)
-        frame.set_child(self.curve)
-        root.append(frame)
+        frame.add(self.curve)
+        root.pack_start(frame, False, False, 0)
 
         # Kaydırıcılar + çıkış göstergesi + limiter paneli
-        sliders = Gtk.Box(spacing=4, vexpand=True)
+        sliders = Gtk.Box(spacing=4)
         self.preamp_scale, self.preamp_lbl = self._make_slider(sliders, "Ön kazanç", self.s["preamp"], -1)
-        sliders.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL, margin_start=6, margin_end=6))
+        sliders.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL, margin_start=6,
+                                         margin_end=6), False, False, 0)
         self.band_scales, self.band_lbls = [], []
         for i, f in enumerate(core.BAND_FREQS):
             sc, lb = self._make_slider(sliders, freq_label(f) + " Hz", self.s["gains"][i], i)
             self.band_scales.append(sc)
             self.band_lbls.append(lb)
-        sliders.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL, margin_start=6, margin_end=6))
+        sliders.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL, margin_start=6,
+                                         margin_end=6), False, False, 0)
 
         mcol = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self.peak_lbl = Gtk.Label(label="−∞", css_classes=["numeric", "caption"], width_chars=5)
+        self.peak_lbl = add_classes(Gtk.Label(label="−∞", width_chars=5), "numeric", "caption")
         self.out_meter = wdg.Meter("level")
-        mcol.append(self.peak_lbl)
-        mcol.append(self.out_meter)
-        mcol.append(Gtk.Label(label="Çıkış", css_classes=["caption-heading"]))
-        sliders.append(mcol)
+        mcol.pack_start(self.peak_lbl, False, False, 0)
+        mcol.pack_start(self.out_meter, True, True, 0)
+        mcol.pack_start(add_classes(Gtk.Label(label="Çıkış"), "caption-heading"), False, False, 0)
+        sliders.pack_start(mcol, False, False, 0)
 
-        self.panel_btn = Gtk.ToggleButton(active=self.s["limiter_panel"], valign=Gtk.Align.CENTER,
-                                          css_classes=["flat", "circular"], margin_start=4)
+        self.panel_btn = add_classes(Gtk.ToggleButton(active=self.s["limiter_panel"],
+                                                      valign=Gtk.Align.CENTER, margin_start=4),
+                                     "flat", "circular")
         self.panel_btn.connect("toggled", self._on_panel_toggled)
-        sliders.append(self.panel_btn)
+        sliders.pack_start(self.panel_btn, False, False, 0)
 
         self.revealer = Gtk.Revealer(transition_type=Gtk.RevealerTransitionType.SLIDE_LEFT,
                                      transition_duration=180, reveal_child=self.s["limiter_panel"])
-        self.revealer.set_child(self._build_limiter_panel())
-        sliders.append(self.revealer)
+        self.revealer.add(self._build_limiter_panel())
+        sliders.pack_start(self.revealer, False, False, 0)
         self._update_panel_btn()
-        root.append(sliders)
+        root.pack_start(sliders, True, True, 0)
 
         bottom = Gtk.Box(spacing=8)
-        self.update_btn = Gtk.Button(visible=False, valign=Gtk.Align.CENTER,
-                                     css_classes=["suggested-action", "pill"])
-        self.update_btn.set_child(Adw.ButtonContent(icon_name="software-update-available-symbolic",
-                                                    label="Güncelle"))
+        self.update_btn = add_classes(Gtk.Button(label="Güncelle", valign=Gtk.Align.CENTER,
+                                                 always_show_image=True, no_show_all=True),
+                                      "suggested-action", "pill")
+        self.update_btn.set_image(Gtk.Image.new_from_icon_name("software-update-available-symbolic",
+                                                               Gtk.IconSize.BUTTON))
         self.update_btn.set_action_name("app.update")
-        bottom.append(self.update_btn)
-        self.status = Gtk.Label(xalign=0, css_classes=["dim-label", "caption"], wrap=True, hexpand=True)
-        bottom.append(self.status)
-        bottom.append(Gtk.Label(label="Limiter", css_classes=["caption-heading"]))
-        self.limiter_sw = Gtk.Switch(valign=Gtk.Align.CENTER, active=self.s["limiter"]["enabled"])
-        self.limiter_sw.set_tooltip_text("Limiter: tepe seviyelerini tavanın altında tutar, "
-                                         "kırpılmayı (bozulmayı) önler.")
-        self.limiter_sw.connect("notify::active", self._on_limiter_toggled)
-        bottom.append(self.limiter_sw)
-        root.append(bottom)
+        bottom.pack_start(self.update_btn, False, False, 0)
+        self.status = add_classes(Gtk.Label(xalign=0, wrap=True, hexpand=True), "dim-label", "caption")
+        bottom.pack_start(self.status, True, True, 0)
+        root.pack_start(bottom, False, False, 0)
 
         # Ölçümler: ekran karesiyle senkron, yalnızca pencere görünürken çalışır
         self.levels = wdg.LevelSource()
@@ -247,6 +301,7 @@ class EqWindow(Adw.ApplicationWindow):
         self._rebuild_presets(self.s.get("preset", CUSTOM))
         self._refresh_labels()
         self._ensure_service()
+        self.show_all()
 
     # ------------------------------------------------------------ yapı
 
@@ -259,26 +314,26 @@ class EqWindow(Adw.ApplicationWindow):
 
     def _make_slider(self, box, title, value, idx):
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, hexpand=True)
-        val = Gtk.Label(css_classes=["numeric", "caption"])
+        val = add_classes(Gtk.Label(), "numeric", "caption")
         sc = Gtk.Scale(orientation=Gtk.Orientation.VERTICAL, inverted=True, vexpand=True,
-                       draw_value=False, height_request=200)
+                       draw_value=False, has_origin=False)
+        sc.set_size_request(-1, 200)
         sc.set_range(core.GAIN_MIN, core.GAIN_MAX)
         sc.set_increments(0.5, 1.0)
-        sc.set_has_origin(False)
         sc.set_value(value)
         sc.connect("value-changed", self._on_slider, idx)
-        name = Gtk.Label(label=title, css_classes=["caption-heading"])
-        col.append(val)
-        col.append(sc)
-        col.append(name)
-        box.append(col)
+        name = add_classes(Gtk.Label(label=title), "caption-heading")
+        col.pack_start(val, False, False, 0)
+        col.pack_start(sc, True, True, 0)
+        col.pack_start(name, False, False, 0)
+        box.pack_start(col, True, True, 0)
         return sc, val
 
     def _build_limiter_panel(self):
-        panel = Gtk.Box(spacing=10, margin_start=8, css_classes=["card"])
-        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
-                        margin_top=8, margin_bottom=8, margin_start=10)
-        inner.append(Gtk.Label(label="Limiter", xalign=0, css_classes=["heading"]))
+        panel = add_classes(Gtk.Box(spacing=10, margin_start=8), "card")
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=8,
+                        margin_bottom=8, margin_start=10)
+        inner.pack_start(add_classes(Gtk.Label(label="Limiter", xalign=0), "heading"), False, False, 0)
         grid = Gtk.Grid(row_spacing=6, column_spacing=10, vexpand=True, valign=Gtk.Align.CENTER)
         self.knobs = {}
         for n, (key, title, fmt, log, step) in enumerate(KNOBS):
@@ -287,22 +342,23 @@ class EqWindow(Adw.ApplicationWindow):
                             on_change=lambda v, k=key: self._on_knob(k, v))
             grid.attach(knob, n % 2, n // 2, 1, 1)
             self.knobs[key] = knob
-        inner.append(grid)
-        panel.append(inner)
+        inner.pack_start(grid, True, True, 0)
+        panel.pack_start(inner, False, False, 0)
 
         gcol = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin_top=8, margin_bottom=8,
                        margin_end=10)
-        self.gr_lbl = Gtk.Label(label="0.0", css_classes=["numeric", "caption"], width_chars=5)
+        self.gr_lbl = add_classes(Gtk.Label(label="0.0", width_chars=5), "numeric", "caption")
         self.gr_meter = wdg.Meter("gr")
-        gcol.append(self.gr_lbl)
-        gcol.append(self.gr_meter)
-        gcol.append(Gtk.Label(label="Azaltma", css_classes=["caption-heading"]))
-        panel.append(gcol)
+        gcol.pack_start(self.gr_lbl, False, False, 0)
+        gcol.pack_start(self.gr_meter, True, True, 0)
+        gcol.pack_start(add_classes(Gtk.Label(label="Azaltma"), "caption-heading"), False, False, 0)
+        panel.pack_start(gcol, False, False, 0)
         return panel
 
     def _update_panel_btn(self):
         open_ = self.panel_btn.get_active()
-        self.panel_btn.set_icon_name("pan-start-symbolic" if not open_ else "pan-end-symbolic")
+        self.panel_btn.set_image(Gtk.Image.new_from_icon_name(
+            "pan-end-symbolic" if open_ else "pan-start-symbolic", Gtk.IconSize.BUTTON))
         self.panel_btn.set_tooltip_text("Limiter ayarlarını gizle" if open_ else "Limiter ayarlarını göster")
 
     def _on_panel_toggled(self, btn):
@@ -311,8 +367,22 @@ class EqWindow(Adw.ApplicationWindow):
         self._update_panel_btn()
         if not btn.get_active():
             # paneli kapatınca pencere eski genişliğine dönsün
-            GLib.timeout_add(200, lambda: (self.set_default_size(840, self.get_height()), False)[1])
+            GLib.timeout_add(200, lambda: (self.resize(self.BASE_W, self.get_size()[1]), False)[1])
         self._queue_save()
+
+    def notify_text(self, text):
+        """libadwaita'daki 'toast' karşılığı: birkaç saniye görünen kısa bildirim."""
+        self.notice_lbl.set_text(text)
+        self.notice.set_reveal_child(True)
+        if self._notice_src:
+            GLib.source_remove(self._notice_src)
+
+        def hide():
+            self._notice_src = 0
+            self.notice.set_reveal_child(False)
+            return False
+
+        self._notice_src = GLib.timeout_add(3000, hide)
 
     # ------------------------------------------------------------ ön ayarlar
 
@@ -324,9 +394,11 @@ class EqWindow(Adw.ApplicationWindow):
     def _rebuild_presets(self, select):
         self._updating = True
         names = [CUSTOM] + list(core.PRESETS) + sorted(self.s["custom_presets"])
-        self.preset_model.splice(0, self.preset_model.get_n_items(), names)
+        self.preset_cb.remove_all()
+        for n in names:
+            self.preset_cb.append_text(n)
         self.preset_names = names
-        self.preset_dd.set_selected(names.index(select) if select in names else 0)
+        self.preset_cb.set_active(names.index(select) if select in names else 0)
         self._updating = False
         self._update_del_btn()
 
@@ -335,12 +407,12 @@ class EqWindow(Adw.ApplicationWindow):
 
     def _select_preset(self, name):
         if name in self.preset_names:
-            self.preset_dd.set_selected(self.preset_names.index(name))
+            self.preset_cb.set_active(self.preset_names.index(name))
 
-    def _on_preset_selected(self, dd, _pspec):
-        if self._updating:
+    def _on_preset_selected(self, cb):
+        if self._updating or cb.get_active() < 0:
             return
-        name = self.preset_names[dd.get_selected()]
+        name = self.preset_names[cb.get_active()]
         self.s["preset"] = name
         self._update_del_btn()
         if name == CUSTOM:
@@ -355,31 +427,28 @@ class EqWindow(Adw.ApplicationWindow):
         self._changed()
 
     def _on_save_preset(self, *_):
-        dlg = Adw.AlertDialog(heading="Ön ayarı kaydet", body="Geçerli ayar için bir ad girin.")
-        entry = Gtk.Entry(placeholder_text="Ön ayar adı", activates_default=True)
+        entry = Gtk.Entry(placeholder_text="Ön ayar adı", activates_default=True, width_chars=28)
         if self.s.get("preset") in self.s["custom_presets"]:
             entry.set_text(self.s["preset"])
-        dlg.set_extra_child(entry)
-        dlg.add_response("cancel", "Vazgeç")
-        dlg.add_response("save", "Kaydet")
-        dlg.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
-        dlg.set_default_response("save")
+        dlg = message(self.app, self, "Ön ayarı kaydet", "Geçerli ayar için bir ad girin.",
+                      [("Vazgeç", R_CANCEL, False), ("Kaydet", R_SAVE, True)],
+                      default=R_SAVE, extra=entry)
 
-        def on_resp(_d, resp):
+        def on_resp(d, resp):
             name = entry.get_text().strip()
-            if resp != "save" or not name:
+            d.destroy()
+            if resp != R_SAVE or not name:
                 return
             if name in core.PRESETS or name == CUSTOM:
-                self.toast.add_toast(Adw.Toast(title="Bu ad hazır bir ön ayara ait, başka bir ad seçin."))
+                self.notify_text("Bu ad hazır bir ön ayara ait, başka bir ad seçin.")
                 return
             self.s["custom_presets"][name] = list(self.s["gains"])
             self.s["preset"] = name
             self._rebuild_presets(name)
             self._queue_save()
-            self.toast.add_toast(Adw.Toast(title="“%s” kaydedildi" % name))
+            self.notify_text("“%s” kaydedildi" % name)
 
         dlg.connect("response", on_resp)
-        dlg.present(self)
 
     def _on_delete_preset(self, *_):
         name = self.s.get("preset")
@@ -388,7 +457,7 @@ class EqWindow(Adw.ApplicationWindow):
             self.s["preset"] = CUSTOM
             self._rebuild_presets(CUSTOM)
             self._queue_save()
-            self.toast.add_toast(Adw.Toast(title="“%s” silindi" % name))
+            self.notify_text("“%s” silindi" % name)
 
     # ------------------------------------------------------------ değişiklikler
 
@@ -407,7 +476,7 @@ class EqWindow(Adw.ApplicationWindow):
                 if preset is None or [float(g) for g in preset] != self.s["gains"]:
                     self.s["preset"] = CUSTOM
                     self._updating = True
-                    self.preset_dd.set_selected(0)
+                    self.preset_cb.set_active(0)
                     self._updating = False
                     self._update_del_btn()
         if not self._updating:
@@ -417,11 +486,6 @@ class EqWindow(Adw.ApplicationWindow):
 
     def _on_knob(self, key, v):
         self.s["limiter"][key] = v
-        self._changed(curve=False)
-
-    def _on_limiter_toggled(self, sw, _pspec):
-        self.s["limiter"]["enabled"] = sw.get_active()
-        self.out_meter.reset_clip()
         self._changed(curve=False)
 
     def _changed(self, curve=True):
@@ -445,14 +509,7 @@ class EqWindow(Adw.ApplicationWindow):
         txt = "Etkin – tüm uygulamaların ses çıkışına uygulanıyor."
         if running is False:
             txt = "Ses motoru çalışmıyor; başlatılıyor…"
-        lim = self.s["limiter"]
-        if lim["enabled"]:
-            txt += "  Limiter açık (tavan %s)." % _fmt_db(lim["ceiling"])
-        else:
-            peak = core.peak_gain(self.s)
-            if peak > 0.5:
-                txt += ("  Uyarı: en yüksek kazanç %+.1f dB; kırpılmayı önlemek için Limiter'i açın "
-                        "veya ön kazancı düşürün." % peak)
+        txt += "  Limiter tavanı %s." % _fmt_db(self.s["limiter"]["ceiling"])
         self.status.set_label(txt)
         return False
 
@@ -545,7 +602,7 @@ class EqWindow(Adw.ApplicationWindow):
         try:
             core.save_settings(self.s)
         except OSError as e:
-            self.toast.add_toast(Adw.Toast(title="Ayarlar kaydedilemedi: %s" % e))
+            self.notify_text("Ayarlar kaydedilemedi: %s" % e)
         return False
 
     def shutdown(self):
@@ -596,44 +653,41 @@ class UpdateFlow:
             lines.append("")
             lines.append("<b>Yenilikler</b>")
             lines += ["• " + GLib.markup_escape_text(x) for x in info["summary"]]
-        dlg = Adw.AlertDialog(heading="Ekolayzer güncellemesi var", body="\n".join(lines),
-                              body_use_markup=True)
-        self.dont_show = Gtk.CheckButton(label="Tekrar gösterme", halign=Gtk.Align.CENTER)
+        self.dont_show = Gtk.CheckButton(label="Tekrar gösterme")
         self.dont_show.set_tooltip_text("Bu sürüm için açılışta popup gösterilmez; "
                                         "güncelleme düğmesi pencerede görünmeye devam eder.")
-        dlg.set_extra_child(self.dont_show)
-        dlg.add_response("later", "Sonra")
+        buttons = [("Sonra", R_LATER, False)]
         if info.get("asset_url"):
-            dlg.add_response("update", "Güncelle")
-            dlg.set_response_appearance("update", Adw.ResponseAppearance.SUGGESTED)
-            dlg.set_default_response("update")
+            buttons.append(("Güncelle", R_UPDATE, True))
+            default = R_UPDATE
         else:
-            dlg.add_response("page", "Sürüm sayfasını aç")
-            dlg.set_default_response("page")
-        dlg.set_close_response("later")
+            buttons.append(("Sürüm sayfasını aç", R_PAGE, True))
+            default = R_PAGE
+        dlg = message(self.app, self.parent(), "Ekolayzer güncellemesi var", "\n".join(lines),
+                      buttons, default=default, extra=self.dont_show, markup=True)
         dlg.connect("response", self._on_response)
-        dlg.present(self.parent())
 
-    def _on_response(self, _dlg, resp):
-        if resp == "update":
+    def _on_response(self, dlg, resp):
+        skip = self.dont_show.get_active()
+        dlg.destroy()
+        if resp == R_UPDATE:
             self._run_update()
             return
-        if self.dont_show.get_active():
+        if skip:
             self.app.skip_version(self.info["version"])
-        if resp == "page":
-            Gtk.UriLauncher.new(self.info["page"]).launch(self.parent(), None, None, None)
+        if resp == R_PAGE:
+            open_uri(self.parent(), self.info["page"])
         self.app.update_finished()
 
     def run_direct(self):
         self._run_update()
 
     def _run_update(self):
-        self.prog = Gtk.ProgressBar()
-        self.pdlg = Adw.AlertDialog(heading="Ekolayzer güncelleniyor",
-                                    body="Ekolayzer %s indiriliyor…" % self.info["version"],
-                                    extra_child=self.prog)
-        self.pdlg.set_can_close(False)
-        self.pdlg.present(self.parent())
+        self.prog = Gtk.ProgressBar(width_request=280)
+        self.pdlg = message(self.app, self.parent(), "Ekolayzer güncelleniyor",
+                            "Ekolayzer %s indiriliyor…" % self.info["version"], [], extra=self.prog)
+        self.pdlg.set_deletable(False)
+        self.pdlg.connect("delete-event", lambda *_: True)  # iş bitmeden kapatılamaz
         threading.Thread(target=self._work, daemon=True).start()
 
     def _work(self):
@@ -647,7 +701,7 @@ class UpdateFlow:
         GLib.idle_add(self._done, ok, msg)
 
     def _installing(self):
-        self.pdlg.set_body("Kuruluyor… Açılan sistem penceresinde parolanı gir.")
+        self.pdlg.format_secondary_text("Kuruluyor… Açılan sistem penceresinde parolanı gir.")
         self._pulse = GLib.timeout_add(120, lambda: (self.prog.pulse(), True)[1])
         return False
 
@@ -655,47 +709,44 @@ class UpdateFlow:
         if self._pulse:
             GLib.source_remove(self._pulse)
             self._pulse = 0
-        self.pdlg.force_close()
+        self.pdlg.destroy()
         gui_open = self.parent() is not None
         if ok:
             self.app.set_update_info(None)
             body = "Ekolayzer %s kuruldu; ses motoru yeni sürümle çalışıyor." % self.info["version"]
             if gui_open:
                 body += "\n\nYeni arayüzü kullanmak için uygulamayı yeniden başlat."
-            dlg = Adw.AlertDialog(heading="Güncelleme tamamlandı", body=body)
-            if gui_open:
-                dlg.add_response("later", "Sonra")
-                dlg.add_response("restart", "Yeniden başlat")
-                dlg.set_response_appearance("restart", Adw.ResponseAppearance.SUGGESTED)
-                dlg.set_default_response("restart")
-                dlg.set_close_response("later")
+                buttons, default = [("Sonra", R_LATER, False), ("Yeniden başlat", R_RESTART, True)], R_RESTART
             else:
-                dlg.add_response("ok", "Tamam")
+                buttons, default = [("Tamam", R_OK, True)], R_OK
+            dlg = message(self.app, self.parent(), "Güncelleme tamamlandı", body, buttons, default=default)
         else:
-            dlg = Adw.AlertDialog(heading="Güncelleme kurulamadı", body=msg)
-            dlg.add_response("ok", "Tamam")
-            dlg.add_response("page", "Sürüm sayfasını aç")
-            dlg.set_close_response("ok")
+            dlg = message(self.app, self.parent(), "Güncelleme kurulamadı", msg,
+                          [("Sürüm sayfasını aç", R_PAGE, False), ("Tamam", R_OK, True)], default=R_OK)
         dlg.connect("response", self._on_result)
-        dlg.present(self.parent())
         return False
 
-    def _on_result(self, _dlg, resp):
-        if resp == "restart":
+    def _on_result(self, dlg, resp):
+        dlg.destroy()
+        if resp == R_RESTART:
             self.app.restart()
             return
-        if resp == "page":
-            Gtk.UriLauncher.new(self.info["page"]).launch(self.parent(), None, None, None)
+        if resp == R_PAGE:
+            open_uri(self.parent(), self.info["page"])
         self.app.update_finished()
 
 
-class EqApp(Adw.Application):
+class EqApp(Gtk.Application):
     def __init__(self):
         super().__init__(application_id=core.APP_ID,
                          flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
         self.win = None
         self._update_busy = False
         self.update_info = None  # bilinen en yeni sürüm (sol alttaki düğme için)
+
+    def do_startup(self):
+        Gtk.Application.do_startup(self)
+        wdg.install_css()
         for name, cb in (("about", self._about), ("quit", lambda *_: self.quit()),
                          ("check-update", lambda *_: self.check_updates(manual=True)),
                          ("update", lambda *_: self.start_update())):
@@ -724,10 +775,15 @@ class EqApp(Adw.Application):
         first = self.win is None
         if first:
             self.win = EqWindow(self)
+            self.win.connect("destroy", self._on_win_destroy)
             self.set_update_info(self.update_info)
         self.win.present()
         if first:
             self.check_updates()
+
+    def _on_win_destroy(self, _w):
+        self.win.shutdown()
+        self.win = None
 
     # ------------------------------------------------------------ güncelleme
 
@@ -749,9 +805,8 @@ class EqApp(Adw.Application):
                 if manual or self._skipped() != info["version"]:
                     self.show_update(info)
             elif manual and self.win:
-                txt = ("Güncelleme sunucusuna ulaşılamadı." if err else
-                       "Ekolayzer güncel (%s)." % VERSION)
-                self.win.toast.add_toast(Adw.Toast(title=txt))
+                self.win.notify_text("Güncelleme sunucusuna ulaşılamadı." if err else
+                                     "Ekolayzer güncel (%s)." % VERSION)
             return False
 
         threading.Thread(target=work, daemon=True).start()
@@ -769,7 +824,7 @@ class EqApp(Adw.Application):
             btn = self.win.update_btn
             btn.set_visible(info is not None)
             if info:
-                btn.get_child().set_label("Güncelle (%s)" % info["version"])
+                btn.set_label("Güncelle (%s)" % info["version"])
                 btn.set_tooltip_text("Ekolayzer %s mevcut (yüklü: %s). Tıklayınca indirilip kurulur."
                                      % (info["version"], info["current"]))
 
@@ -778,7 +833,7 @@ class EqApp(Adw.Application):
         if self._update_busy or not self.update_info:
             return
         if not self.update_info.get("asset_url"):
-            Gtk.UriLauncher.new(self.update_info["page"]).launch(self.win, None, None, None)
+            open_uri(self.win, self.update_info["page"])
             return
         self._update_busy = True
         self.hold()
@@ -811,22 +866,24 @@ class EqApp(Adw.Application):
     def do_shutdown(self):
         if self.win:
             self.win.shutdown()
-        Adw.Application.do_shutdown(self)
+        Gtk.Application.do_shutdown(self)
 
     def _about(self, *_):
-        about = Adw.AboutDialog(
-            application_name="Ekolayzer",
-            application_icon="ekolayzer",
+        about = Gtk.AboutDialog(
+            transient_for=self.win, modal=True,
+            program_name="Ekolayzer",
+            logo_icon_name="ekolayzer",
             version=VERSION,
-            developer_name="Gökdeniz G.",
+            authors=["Gökdeniz G."],
             copyright="© 2026 Gökdeniz G.",
             website="https://github.com/%s" % upd.REPO,
-            issue_url="https://github.com/%s/issues" % upd.REPO,
+            website_label="GitHub'daki proje sayfası",
             comments="PipeWire tabanlı, sistem geneli 10 bantlı ekolayzer ve limiter.\n"
                      "Tüm uygulamaların ses çıkışına uygulanır.",
             license_type=Gtk.License.GPL_3_0,
         )
-        about.present(self.win)
+        about.connect("response", lambda d, _r: d.destroy())
+        about.show()
 
 
 def main(argv=None):

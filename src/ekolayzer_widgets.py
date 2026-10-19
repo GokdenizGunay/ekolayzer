@@ -1,11 +1,11 @@
-"""Ekolayzer arayüz bileşenleri: paylaşılan bellek seviye okuyucu, seviye göstergeleri, döner düğme."""
+"""Ekolayzer arayüz bileşenleri (GTK3): paylaşılan bellek seviye okuyucu, seviye göstergeleri, döner düğme."""
 
 import math
 import mmap
 import struct
 import time
 
-from gi.repository import Adw, Gdk, Gtk
+from gi.repository import Gdk, Gtk
 
 import ekolayzer_core as core
 
@@ -13,6 +13,54 @@ LV_MAGIC = 0x4C564B45
 LV_SLOTS = 64
 _HDR = struct.Struct("<IIII")
 _SLOT = struct.Struct("<4f")
+
+# libadwaita'daki yardımcı stil sınıflarının GTK3 karşılıkları (her temada çalışacak şekilde)
+CSS = b"""
+.caption { font-size: 0.85em; }
+.caption-heading { font-size: 0.85em; font-weight: bold; }
+.heading { font-weight: bold; }
+.numeric { font-feature-settings: "tnum"; }
+.card {
+    background-color: alpha(@theme_fg_color, 0.04);
+    border: 1px solid alpha(@theme_fg_color, 0.12);
+    border-radius: 10px;
+}
+.pill { border-radius: 999px; padding: 4px 14px; }
+.ekz-notice {
+    background-color: alpha(@theme_fg_color, 0.85);
+    color: @theme_bg_color;
+    border-radius: 999px;
+    padding: 8px 18px;
+    margin-top: 10px;
+}
+"""
+
+
+def install_css():
+    provider = Gtk.CssProvider()
+    provider.load_from_data(CSS)
+    Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider,
+                                             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+
+def add_classes(widget, *classes):
+    ctx = widget.get_style_context()
+    for c in classes:
+        ctx.add_class(c)
+    return widget
+
+
+def theme_colors(widget):
+    """(ön plan, vurgu) renkleri; vurgu temanın seçim/vurgu renginden alınır."""
+    ctx = widget.get_style_context()
+    fg = ctx.get_color(ctx.get_state())
+    for name in ("accent_bg_color", "accent_color", "theme_selected_bg_color"):
+        ok, col = ctx.lookup_color(name)
+        if ok:
+            return fg, col
+    acc = Gdk.RGBA()
+    acc.parse("#3584e4")
+    return fg, acc
 
 
 def to_db(v):
@@ -76,11 +124,10 @@ class LevelSource:
 class Meter(Gtk.DrawingArea):
     """Dikey tepe göstergesi.
 
-    mode="level": stereo çıkış seviyesi (0 .. -60 dBFS), yeşil→sarı→kırmızı, kırpılma ışığı.
+    mode="level": stereo çıkış seviyesi (0 .. -60 dBFS), yeşil→sarı→kırmızı.
     mode="gr":    kazanç azaltma (0 .. 24 dB), yukarıdan aşağı dolar.
     """
 
-    CLIP_H = 8
     BAR_W = 9
     GAP = 3
     FALL_DB_S = 48.0   # hızlı düşüş
@@ -92,26 +139,15 @@ class Meter(Gtk.DrawingArea):
         self.bars = 2 if mode == "level" else 1
         self.span = 60.0 if mode == "level" else 24.0
         self.marks = (0, 6, 12, 24, 36, 48, 60) if mode == "level" else (0, 3, 6, 9, 12, 18, 24)
-        self.set_content_width(self.bars * self.BAR_W + (self.bars - 1) * self.GAP + 24)
+        self.set_size_request(self.bars * self.BAR_W + (self.bars - 1) * self.GAP + 24, 120)
         self.set_vexpand(True)
         self.vals = [0.0] * self.bars    # gösterilen değer (span içinde, 0 = boş)
         self.holds = [0.0] * self.bars
         self.hold_t = [0.0] * self.bars
-        self.clipped = False
         self.last_t = time.monotonic()
-        self.set_draw_func(self._draw)
-        if mode == "level":
-            self.set_tooltip_text("Çıkış seviyesi (dBFS). Kırmızı ışık kırpılma/0 dBFS'ye ulaşıldığını "
-                                  "gösterir; sıfırlamak için tıklayın.")
-            click = Gtk.GestureClick()
-            click.connect("pressed", lambda *_: self.reset_clip())
-            self.add_controller(click)
-        else:
-            self.set_tooltip_text("Limiterin uyguladığı kazanç azaltma (dB)")
-
-    def reset_clip(self):
-        self.clipped = False
-        self.queue_draw()
+        self.connect("draw", self._draw)
+        self.set_tooltip_text("Çıkış seviyesi (dBFS)" if mode == "level"
+                              else "Limiterin uyguladığı kazanç azaltma (dB)")
 
     def push(self, values):
         """values: level modunda doğrusal tepe (sol, sağ); gr modunda (dB,). None = veri yok."""
@@ -119,15 +155,11 @@ class Meter(Gtk.DrawingArea):
         dt = min(now - self.last_t, 0.1)
         self.last_t = now
         dirty = False
-        was_clipped = self.clipped
         for i in range(self.bars):
             if values is None:
                 v = 0.0
             elif self.mode == "level":
-                p = values[i]
-                if p >= 0.9999:
-                    self.clipped = True
-                v = max(0.0, self.span + max(to_db(p), -self.span))
+                v = max(0.0, self.span + max(to_db(values[i]), -self.span))
             else:
                 v = min(max(values[0], 0.0), self.span)
             cur = self.vals[i]
@@ -139,12 +171,13 @@ class Meter(Gtk.DrawingArea):
             if abs(new - cur) > 0.05 or abs(self.holds[i] - hold) > 0.05:
                 dirty = True
             self.vals[i] = new
-        if dirty or self.clipped != was_clipped:
+        if dirty:
             self.queue_draw()
 
-    def _draw(self, _area, cr, w, h):
-        fg = self.get_color()
-        top = self.CLIP_H + 4 if self.mode == "level" else 7
+    def _draw(self, _area, cr):
+        w, h = self.get_allocated_width(), self.get_allocated_height()
+        fg, _acc = theme_colors(self)
+        top = 7
         bh = h - top - 6
         bars_w = self.bars * self.BAR_W + (self.bars - 1) * self.GAP
 
@@ -199,18 +232,12 @@ class Meter(Gtk.DrawingArea):
                 cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.85)
                 cr.rectangle(x, yh - 1, self.BAR_W, 2)
                 cr.fill()
-
-        if self.mode == "level":
-            if self.clipped:
-                cr.set_source_rgb(0.88, 0.11, 0.14)
-            else:
-                cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.15)
-            cr.rectangle(0, 0, bars_w, self.CLIP_H)
-            cr.fill()
+        return False
 
 
 class Knob(Gtk.Box):
-    """Döner düğme: dikey sürükleme (Shift ile ince ayar), tekerlek, çift tıkla varsayılana dön."""
+    """Döner düğme: dikey sürükleme (fare veya dokunma; Shift ile ince ayar), tekerlek,
+    ok tuşları, çift tıkla varsayılana dön."""
 
     SIZE = 46
 
@@ -219,32 +246,36 @@ class Knob(Gtk.Box):
         self.lo, self.hi, self.log, self.default = lo, hi, log, default
         self.fmt, self.step, self.on_change = fmt, step, on_change
         self.value = value
-        self.append(Gtk.Label(label=title, css_classes=["caption-heading"]))
-        self.area = Gtk.DrawingArea(content_width=self.SIZE, content_height=self.SIZE,
-                                    halign=Gtk.Align.CENTER, focusable=True)
-        self.area.set_draw_func(self._draw)
-        self.area.set_cursor(Gdk.Cursor.new_from_name("ns-resize"))
+        self.pack_start(add_classes(Gtk.Label(label=title), "caption-heading"), False, False, 0)
+        self.area = Gtk.DrawingArea(halign=Gtk.Align.CENTER, can_focus=True)
+        self.area.set_size_request(self.SIZE, self.SIZE)
+        self.area.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK |
+                             Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.SCROLL_MASK |
+                             Gdk.EventMask.SMOOTH_SCROLL_MASK | Gdk.EventMask.KEY_PRESS_MASK |
+                             Gdk.EventMask.TOUCH_MASK)
+        self.area.connect("draw", self._draw)
+        self.area.connect("realize", self._realize)
+        self.area.connect("scroll-event", self._scroll)
+        self.area.connect("button-press-event", self._press)
+        self.area.connect("key-press-event", self._key)
+        self.area.connect("focus-in-event", lambda *_: self.area.queue_draw())
+        self.area.connect("focus-out-event", lambda *_: self.area.queue_draw())
         self.area.set_tooltip_text("%s — sürükleyin veya tekerleği kullanın (Shift: ince), "
                                    "çift tıklama: varsayılan" % title)
-        self.append(self.area)
-        self.lbl = Gtk.Label(css_classes=["numeric", "caption"])
-        self.append(self.lbl)
+        self.pack_start(self.area, False, False, 0)
+        self.lbl = add_classes(Gtk.Label(), "numeric", "caption")
+        self.pack_start(self.lbl, False, False, 0)
 
-        drag = Gtk.GestureDrag()
-        drag.connect("drag-begin", self._drag_begin)
-        drag.connect("drag-update", self._drag_update)
-        self.area.add_controller(drag)
-        scroll = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.VERTICAL)
-        scroll.connect("scroll", self._scroll)
-        self.area.add_controller(scroll)
-        click = Gtk.GestureClick()
-        click.connect("pressed", self._click)
-        self.area.add_controller(click)
-        keys = Gtk.EventControllerKey()
-        keys.connect("key-pressed", self._key)
-        self.area.add_controller(keys)
+        # GTK3'te hareket algılayıcıların bir referansta tutulması gerekir
+        self._drag = Gtk.GestureDrag.new(self.area)
+        self._drag.set_touch_only(False)
+        self._drag.connect("drag-begin", self._drag_begin)
+        self._drag.connect("drag-update", self._drag_update)
         self._start = 0.0
         self._update_label()
+
+    def _realize(self, area):
+        area.get_window().set_cursor(Gdk.Cursor.new_from_name(area.get_display(), "ns-resize"))
 
     # değer <-> 0..1
     def _to_norm(self, v):
@@ -272,13 +303,17 @@ class Knob(Gtk.Box):
     def _update_label(self):
         self.lbl.set_label(self.fmt(self.value))
 
+    @staticmethod
+    def _shift_held():
+        ok, state = Gtk.get_current_event_state()
+        return bool(ok and state & Gdk.ModifierType.SHIFT_MASK)
+
     def _drag_begin(self, _g, _x, _y):
         self._start = self._to_norm(self.value)
         self.area.grab_focus()
 
-    def _drag_update(self, g, _dx, dy):
-        fine = g.get_current_event_state() & Gdk.ModifierType.SHIFT_MASK
-        self.set_value(self._from_norm(self._start - dy / (800.0 if fine else 160.0)))
+    def _drag_update(self, _g, _dx, dy):
+        self.set_value(self._from_norm(self._start - dy / (800.0 if self._shift_held() else 160.0)))
 
     def _nudge(self, steps, fine=False):
         v = self._from_norm(self._to_norm(self.value) + steps * (0.005 if fine else 0.025))
@@ -286,31 +321,41 @@ class Knob(Gtk.Box):
             v = self.value + (self.step if steps > 0 else -self.step)  # yuvarlamada takılma
         self.set_value(round(v / self.step) * self.step if self.step else v)
 
-    def _scroll(self, ctl, _dx, dy):
-        fine = ctl.get_current_event_state() & Gdk.ModifierType.SHIFT_MASK
-        self._nudge(-dy, fine)
+    def _scroll(self, _w, ev):
+        fine = bool(ev.state & Gdk.ModifierType.SHIFT_MASK)
+        if ev.direction == Gdk.ScrollDirection.UP:
+            self._nudge(1, fine)
+        elif ev.direction == Gdk.ScrollDirection.DOWN:
+            self._nudge(-1, fine)
+        elif ev.direction == Gdk.ScrollDirection.SMOOTH:
+            ok, _dx, dy = ev.get_scroll_deltas()
+            if ok and dy:
+                self._nudge(-dy, fine)
         return True
 
-    def _click(self, _g, n_press, _x, _y):
-        if n_press == 2:
+    def _press(self, _w, ev):
+        if ev.type == Gdk.EventType.DOUBLE_BUTTON_PRESS:
             self.set_value(self.default)
+            return True
+        return False
 
-    def _key(self, _c, keyval, _code, state):
-        fine = bool(state & Gdk.ModifierType.SHIFT_MASK)
-        if keyval in (Gdk.KEY_Up, Gdk.KEY_Right):
+    def _key(self, _w, ev):
+        fine = bool(ev.state & Gdk.ModifierType.SHIFT_MASK)
+        if ev.keyval in (Gdk.KEY_Up, Gdk.KEY_Right):
             self._nudge(1, fine)
-        elif keyval in (Gdk.KEY_Down, Gdk.KEY_Left):
+        elif ev.keyval in (Gdk.KEY_Down, Gdk.KEY_Left):
             self._nudge(-1, fine)
-        elif keyval in (Gdk.KEY_Home, Gdk.KEY_BackSpace, Gdk.KEY_Delete):
+        elif ev.keyval in (Gdk.KEY_Home, Gdk.KEY_BackSpace, Gdk.KEY_Delete):
             self.set_value(self.default)
         else:
             return False
         return True
 
-    def _draw(self, area, cr, w, h):
-        fg = self.get_color()
-        accent = Adw.StyleManager.get_default().get_accent_color_rgba()
-        if not self.get_sensitive():
+    def _draw(self, area, cr):
+        w, h = area.get_allocated_width(), area.get_allocated_height()
+        fg, accent = theme_colors(self)
+        sensitive = self.get_sensitive()
+        if not sensitive:
             accent = fg
         cx, cy = w / 2, h / 2
         rad = min(w, h) / 2 - 4
@@ -321,7 +366,7 @@ class Knob(Gtk.Box):
         cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.15)
         cr.arc(cx, cy, rad, a0, a1)
         cr.stroke()
-        cr.set_source_rgba(accent.red, accent.green, accent.blue, 1.0 if self.get_sensitive() else 0.4)
+        cr.set_source_rgba(accent.red, accent.green, accent.blue, 1.0 if sensitive else 0.4)
         cr.arc(cx, cy, rad, a0, a)
         cr.stroke()
         cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.08)
@@ -337,3 +382,4 @@ class Knob(Gtk.Box):
             cr.set_source_rgba(accent.red, accent.green, accent.blue, 0.6)
             cr.arc(cx, cy, rad + 2.5, 0, 2 * math.pi)
             cr.stroke()
+        return False

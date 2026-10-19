@@ -1,23 +1,160 @@
 #!/usr/bin/python3
-"""Kullanıcı ayarlarından filter-chain yapılandırmasını üretip PipeWire filtresini başlatır."""
+"""Kullanıcı ayarlarından filter-chain yapılandırmasını üretip PipeWire filtresini başlatır.
+
+WirePlumber 0.5+ (Pardus 25, ETAP 25): "smart filter" filtreyi varsayılan çıkışın önüne kendisi
+yerleştirir; bu süreç doğrudan pipewire'a dönüşür (ek süreç yok).
+
+WirePlumber 0.4 (ETAP 23): smart filter yoktur. Bu süreç küçük bir denetleyici olarak kalır:
+  - filtrenin çıkışını gerçek aygıta bağlar ve filtreyi varsayılan çıkış yapar,
+  - kullanıcı ayarlardan başka bir aygıt seçerse filtreyi oraya yönlendirir (olay tabanlı),
+  - kapatılınca/kaldırılınca önceki varsayılan aygıtı geri yükler.
+"""
 
 import os
+import re
+import signal
+import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import ekolayzer_core as core  # noqa: E402
+
+HW_FILE = os.path.join(core.runtime_dir(), "hw-sink")
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def write_conf(s, legacy=False, target=None):
+    os.makedirs(core.runtime_dir(), exist_ok=True)
+    conf = os.path.join(core.runtime_dir(), "filter-chain.conf")
+    with open(conf, "w", encoding="utf-8") as f:
+        f.write(core.build_filter_chain_conf(s, legacy=legacy, target=target))
+    return conf
+
+
+def remember_hw(name):
+    try:
+        with open(HW_FILE, "w", encoding="utf-8") as f:
+            f.write(name)
+    except OSError:
+        pass
+
+
+def recall_hw():
+    try:
+        with open(HW_FILE, encoding="utf-8") as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def pick_hw():
+    """Filtrenin bağlanacağı gerçek aygıt: geçerli varsayılan (Ekolayzer değilse), yoksa son bilinen,
+    o da yoksa ilk bulunan aygıt."""
+    sinks = core.hardware_sinks()
+    names = [n for _i, n, _d in sinks]
+    cur = core.get_default_sink()
+    if cur and cur != core.CAPTURE_NODE and cur in names:
+        return cur
+    last = recall_hw()
+    if last in names:
+        return last
+    return names[0] if names else cur if cur != core.CAPTURE_NODE else None
+
+
+class Legacy:
+    def __init__(self, s):
+        self.s = s
+        self.child = None
+        self.mon = None
+        self.hw = None
+        self.stopping = False
+
+    def wait_node(self, name, timeout=8.0):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            nid = core.node_id(name)
+            if nid is not None:
+                return nid
+            time.sleep(0.2)
+        return None
+
+    def retarget(self, hw):
+        sinks = {n: i for i, n, _d in core.hardware_sinks()}
+        if hw not in sinks:
+            return
+        self.hw = hw
+        remember_hw(hw)
+        play = core.node_id(core.PLAYBACK_NODE)
+        if play is not None:
+            core.set_stream_target(play, hw, sinks[hw])
+        log("Çıkış aygıtı: %s" % hw)
+
+    def stop(self, *_):
+        if self.stopping:
+            return
+        self.stopping = True
+        if self.hw:
+            core.set_default_sink(self.hw)  # önceki varsayılan aygıtı geri yükle
+            log("Varsayılan çıkış geri yüklendi: %s" % self.hw)
+        for p in (self.mon, self.child):
+            if p and p.poll() is None:
+                p.terminate()
+        sys.exit(0)
+
+    def run(self):
+        signal.signal(signal.SIGTERM, self.stop)
+        signal.signal(signal.SIGINT, self.stop)
+        self.hw = pick_hw()
+        if self.hw:
+            remember_hw(self.hw)
+        conf = write_conf(self.s, legacy=True, target=self.hw)
+        self.child = subprocess.Popen(["pipewire", "-c", conf])
+        if self.wait_node(core.CAPTURE_NODE) is None:
+            log("Filtre düğümü oluşmadı.")
+            self.child.terminate()
+            return 1
+        core.set_default_sink(core.CAPTURE_NODE)
+        log("Klasik yönlendirme (WirePlumber 0.4): varsayılan çıkış Ekolayzer, hedef %s" % self.hw)
+
+        # Varsayılan çıkış değişikliklerini izle (olay tabanlı; boşta CPU kullanmaz)
+        self.mon = subprocess.Popen(["pw-metadata", "-m", "0"], stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        pat = re.compile(r"key:'(default\.(?:configured\.)?audio\.sink)' value:'([^']*)'")
+        for line in self.mon.stdout:
+            if self.child.poll() is not None:
+                break
+            m = pat.search(line)
+            if not m:
+                continue
+            name = core.parse_metadata_name(m.group(2))
+            if not name or name == core.CAPTURE_NODE:
+                continue
+            # Kullanıcı başka bir aygıt seçti: filtreyi oraya yönlendir, Ekolayzer'i yeniden varsayılan yap
+            if name != self.hw:
+                self.retarget(name)
+            core.set_default_sink(core.CAPTURE_NODE)
+        code = self.child.wait() if self.child.poll() is None else self.child.returncode
+        if not self.stopping:
+            if self.hw:
+                core.set_default_sink(self.hw)
+            log("pipewire süreci sona erdi (%s)." % code)
+            return 1
+        return 0
 
 
 def main():
     s = core.load_settings()
     if not s["enabled"]:
-        print("Ekolayzer devre dışı; filtre başlatılmadı.")
+        log("Ekolayzer devre dışı; filtre başlatılmadı.")
         return 0
-    os.makedirs(core.runtime_dir(), exist_ok=True)
-    conf = os.path.join(core.runtime_dir(), "filter-chain.conf")
-    with open(conf, "w", encoding="utf-8") as f:
-        f.write(core.build_filter_chain_conf(s))
-    os.execvp("pipewire", ["pipewire", "-c", conf])
+    if core.smart_filters_supported():
+        conf = write_conf(s)
+        os.execvp("pipewire", ["pipewire", "-c", conf])
+    return Legacy(s).run()
 
 
 if __name__ == "__main__":
