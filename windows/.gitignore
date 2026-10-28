@@ -1,0 +1,6 @@
+build/
+app/bin/
+app/obj/
+*.exe
+*.obj
+*.pdb

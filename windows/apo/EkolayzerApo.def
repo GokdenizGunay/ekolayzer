@@ -1,0 +1,4 @@
+LIBRARY EkolayzerApo
+EXPORTS
+	DllGetClassObject PRIVATE
+	DllCanUnloadNow PRIVATE

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- .NET Framework 4.8: Windows 10/11'de hazır kurulu gelir, ek çalışma zamanı gerekmez. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>Ekolayzer</AssemblyName>
+    <RootNamespace>Ekolayzer</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>ekolayzer.ico</ApplicationIcon>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <DebugType>none</DebugType>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Product>Ekolayzer</Product>
+    <AssemblyTitle>Ekolayzer</AssemblyTitle>
+    <Description>Sistem geneli 10 bantlı ekolayzer ve limiter</Description>
+    <Company>Gökdeniz G.</Company>
+    <Copyright>© 2026 Gökdeniz G.</Copyright>
+    <Version>$(EkzVersion)</Version>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.ServiceProcess" />
+    <EmbeddedResource Include="..\build\EkolayzerApo.dll" LogicalName="EkolayzerApo.dll" />
+    <EmbeddedResource Include="ekolayzer.ico" LogicalName="ekolayzer.ico" />
+  </ItemGroup>
+</Project>

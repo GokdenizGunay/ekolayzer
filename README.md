@@ -4,6 +4,9 @@ Pardus için sistem geneli ses ekolayzeri ve limiter. Pardus 25 (GNOME, XFCE), *
 
 ![Ekolayzer ekran görüntüsü](docs/ekran-goruntusu.png)
 
+> **Windows sürümü:** Aynı özellikler Windows 10/11 için de var: tek `ekolayzer-setup-<sürüm>.exe` ile kurulur,
+> Windows ses motoruna eklenir ve bildirim alanında çalışır. Kaynak kodu ve ayrıntılar: [windows/](windows/README.md).
+
 ## Özellikler
 
 - **10 bantlı ekolayzer** (31 Hz – 16 kHz, ±12 dB), ön kazanç ve canlı frekans yanıtı eğrisi
