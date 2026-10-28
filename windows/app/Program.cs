@@ -122,7 +122,7 @@ namespace Ekolayzer
             else
             {
                 var q = new TaskDlg { Heading = installed == null ? $"Ekolayzer {Core.Version} kurulsun mu?" : $"Ekolayzer {Core.Version}",
-                                      Footer = $"© 2026 {Core.Author} · GPL-3.0" };
+                                      Footer = "GPL-3.0-or-later" };
                 q.Body = "Sistem geneli 10 bantlı ekolayzer ve limiter. Tüm uygulamaların ses çıkışına uygulanır.\n\n";
                 if (installed == null) q.Body += "Kurulum sırasında ses birkaç saniye kesilir.";
                 else

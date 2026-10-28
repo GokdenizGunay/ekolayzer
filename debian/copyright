@@ -2,7 +2,7 @@ Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: ekolayzer
 
 Files: *
-Copyright: 2026 Gökdeniz G.
+Copyright: 2026 Ekolayzer
 License: GPL-3.0+
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by

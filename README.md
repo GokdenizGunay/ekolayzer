@@ -97,4 +97,4 @@ Kaldırınca ayar dosyan silinmez; yeniden kurarsan ayarların geri gelir. Tamam
 
 ## Lisans
 
-[GPL-3.0-or-later](LICENSE) © 2026 Gökdeniz G.
+[GPL-3.0-or-later](LICENSE)

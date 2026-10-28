@@ -10,7 +10,6 @@
  * Ayarlar ve seviye ölçümleri ortak bellek dosyasıyla taşınır (bkz. ekz_shared.h). Gerçek zamanlı
  * iş parçacığında (APOProcess) bellek ayırma, kilit, dosya veya sistem çağrısı yoktur.
  *
- * Copyright (c) 2026 Gökdeniz G.
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include <windows.h>
@@ -227,7 +226,7 @@ public:
 		r->clsid = CLSID_EkolayzerApo;
 		r->Flags = (APO_FLAG)(APO_FLAG_INPLACE | APO_FLAG_DEFAULT);
 		wcscpy_s(r->szFriendlyName, L"Ekolayzer");
-		wcscpy_s(r->szCopyrightInfo, L"Copyright (c) 2026 G\u00f6kdeniz G.");
+		wcscpy_s(r->szCopyrightInfo, L"GPL-3.0-or-later");
 		r->u32MajorVersion = 1;
 		r->u32MinorVersion = 4;
 		r->u32MinInputConnections = 1;

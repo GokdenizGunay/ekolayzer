@@ -302,7 +302,7 @@ namespace Ekolayzer
             {
                 Heading = "Ekolayzer " + Core.Version,
                 Body = "Sistem geneli 10 bantlı ekolayzer ve limiter.\nTüm uygulamaların ses çıkışına uygulanır.\n\n" +
-                       $"© 2026 {Core.Author}\nLisans: GNU GPL 3.0 veya üstü\n\n" +
+                       "Lisans: GNU GPL 3.0 veya üstü\n\n" +
                        $"<a href=\"https://github.com/{Core.Repo}\">GitHub'daki proje sayfası</a>",
                 Links = true,
                 Owner = Owner,

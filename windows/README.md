@@ -42,4 +42,4 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 ## Lisans
 
-GPL-3.0-or-later © 2026 Gökdeniz G. — bkz. depo kökündeki [LICENSE](../LICENSE).
+GPL-3.0-or-later — bkz. depo kökündeki [LICENSE](../LICENSE).

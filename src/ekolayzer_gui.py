@@ -874,8 +874,6 @@ class EqApp(Gtk.Application):
             program_name="Ekolayzer",
             logo_icon_name="ekolayzer",
             version=VERSION,
-            authors=["Gökdeniz G."],
-            copyright="© 2026 Gökdeniz G.",
             website="https://github.com/%s" % upd.REPO,
             website_label="GitHub'daki proje sayfası",
             comments="PipeWire tabanlı, sistem geneli 10 bantlı ekolayzer ve limiter.\n"

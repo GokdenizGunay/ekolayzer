@@ -10,7 +10,6 @@
  * Motor -> arayüz: halka arabellekte her 256 örnekte bir seviye dilimi (Linux sürümüyle aynı).
  * C# karşılığı: app/Engine.cs (ofsetler birebir aynı olmalı).
  *
- * Copyright (c) 2026 Gökdeniz G.
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #pragma once

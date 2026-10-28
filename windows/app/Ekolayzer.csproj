@@ -17,9 +17,9 @@
     <AssemblyTitle>Ekolayzer</AssemblyTitle>
     <Description>Sistem geneli 10 bantlı ekolayzer ve limiter</Description>
     <Company>Gökdeniz G.</Company>
-    <Copyright>© 2026 Gökdeniz G.</Copyright>
     <Version>$(EkzVersion)</Version>
     <Deterministic>true</Deterministic>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System.Windows.Forms" />

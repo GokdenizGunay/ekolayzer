@@ -101,7 +101,7 @@ namespace Ekolayzer
             {
                 k.SetValue("DisplayName", "Ekolayzer");
                 k.SetValue("DisplayVersion", Core.Version);
-                k.SetValue("Publisher", Core.Author);
+                k.DeleteValue("Publisher", false);  // eski sürümlerden kalan
                 k.SetValue("DisplayIcon", Core.InstalledExe + ",0");
                 k.SetValue("InstallLocation", Core.InstallDir);
                 k.SetValue("UninstallString", $"\"{Core.InstalledExe}\" --uninstall");
@@ -187,7 +187,7 @@ namespace Ekolayzer
             using (var k = Registry.LocalMachine.CreateSubKey(ApoKey))
             {
                 ch |= SetIfDifferent(k, "FriendlyName", "Ekolayzer", RegistryValueKind.String);
-                ch |= SetIfDifferent(k, "Copyright", "Copyright (c) 2026 " + Core.Author, RegistryValueKind.String);
+                ch |= SetIfDifferent(k, "Copyright", "GPL-3.0-or-later", RegistryValueKind.String);
                 foreach (var (n, v) in new[] {
                     ("MajorVersion", 1), ("MinorVersion", 4), ("Flags", 15),
                     ("MinInputConnections", 1), ("MaxInputConnections", 1),

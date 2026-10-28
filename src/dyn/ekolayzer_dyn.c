@@ -16,7 +16,6 @@
  * $XDG_RUNTIME_DIR/ekolayzer/levels dosyasındaki halka arabelleğe yazılır
  * (kilitsiz; arayüz mmap ile okur, ek süreç veya akış gerekmez).
  *
- * Copyright (c) 2026 Gökdeniz G.
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include <fcntl.h>
@@ -376,7 +375,7 @@ static const LADSPA_Descriptor descriptor = {
 	.Label = "ekolayzer_dyn",
 	.Properties = PROP_HARD_RT,
 	.Name = "Ekolayzer Limiter",
-	.Maker = "Gökdeniz G.",
+	.Maker = "Ekolayzer",
 	.Copyright = "GPL-3.0-or-later",
 	.PortCount = N_PORTS,
 	.PortDescriptors = port_desc,
