@@ -14,7 +14,15 @@ namespace Ekolayzer
         public const uint Magic = 0x315A4B45;  // "EKZ1"
         public const uint Layout = 1;
         public const int FileSize = 4096;
-        const int OffSeq = 8, OffParams = 16, OffRate = 128, OffCount = 132, OffAlive = 152, OffSlots = 256;
+        const int OffSeq = 8, OffParams = 16, OffRate = 128, OffCount = 132, OffAlive = 152, OffReader = 168, OffSlots = 256;
+
+        [DllImport("kernel32.dll")] static extern ulong GetTickCount64();
+
+        /// <summary>Motora "pencere açık ve odakta, seviye ölç" der (1 saniye geçerli).</summary>
+        public void Touch()
+        {
+            if (Open) Volatile.Write(ref *(long*)(p + OffReader), (long)GetTickCount64());
+        }
         const int Slots = 64, SlotSize = 16;
 
         MemoryMappedFile mmf;

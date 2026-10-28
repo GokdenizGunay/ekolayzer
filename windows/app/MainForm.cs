@@ -462,6 +462,7 @@ namespace Ekolayzer
         void OnMeterTick(object sender, EventArgs e)
         {
             double now = Now;
+            engine.Touch();  // motor yalnızca bu damga tazeyken seviye ölçer
             var data = S.Enabled ? engine.Poll() : null;
             bool fast = meterTimer.Interval < 100;
             bool silent = data == null || Math.Max(data.Value.L, data.Value.R) < 1e-5f && data.Value.Gr < 1e-5f;
@@ -512,11 +513,43 @@ namespace Ekolayzer
             UpdateTimers();
         }
 
+        // Odak durumu etkinleşme olaylarından izlenir. Form.ActiveForm sistemin ön plan penceresine baktığı
+        // için etkinleşme anında henüz güncellenmemiş olabilir (simgeden açınca, sonradan odağa alınca).
+        bool isActive;
+
+        protected override void OnActivated(EventArgs e)
+        {
+            isActive = true;
+            base.OnActivated(e);
+            UpdateTimers();
+        }
+
+        protected override void OnDeactivate(EventArgs e)
+        {
+            isActive = false;
+            base.OnDeactivate(e);
+            UpdateTimers();
+        }
+
+        /// <summary>Metreler yalnızca pencere açık ve odaktayken çalışır.</summary>
         void UpdateTimers()
         {
-            bool on = Visible && WindowState != FormWindowState.Minimized;
-            if (on) { StartMeters(true); statusTimer.Start(); }
-            else { meterTimer.Stop(); statusTimer.Stop(); }
+            bool visible = Visible && WindowState != FormWindowState.Minimized;
+            bool active = visible && isActive;
+            if (active) StartMeters(true);
+            else if (meterTimer.Enabled)
+            {
+                meterTimer.Stop();
+                // metreleri boşalt: odak dışındayken eski değerde donup kalmasın
+                outMeter.Clear();
+                grMeter.Clear();
+                outMeter.SetTopText("−∞");
+                grMeter.SetTopText("0.0");
+                peakHold = -120;
+                quietSince = -1;
+            }
+            if (visible) statusTimer.Start();
+            else statusTimer.Stop();
         }
 
         // ------------------------------------------------------------ kaydetme

@@ -355,6 +355,18 @@ public:
 		const int64_t now = (int64_t)GetTickCount64();
 		if (shm_.sh)
 			shm_.sh->alive_tick = now;
+		/* seviye ölçümü yalnızca arayüz izlerken (pencere açık ve odakta) */
+		bool meter = false;
+		if (shm_.sh) {
+			const int64_t rt = shm_.sh->reader_tick;
+			meter = rt <= now && now - rt < 1000;
+		}
+		if (meter != meter_) {
+			meter_ = meter;
+			sub_n_ = 0;
+			acc_l_ = acc_r_ = acc_in_ = 0.0f;
+			acc_g_ = 1.0f;
+		}
 
 		const bool silent_in = ip->u32BufferFlags == BUFFER_SILENT;
 		if (!prm_.enabled) {
@@ -489,7 +501,7 @@ private:
 	}
 
 	LONG id_;
-	bool locked_ = false, bypassed_ = false;
+	bool locked_ = false, bypassed_ = false, meter_ = false;
 	UINT32 ch_ = 2;
 	float rate_ = 48000.0f;
 	SharedFile shm_;
@@ -678,9 +690,11 @@ private:
 	{
 		EkzShared *s = shm_.sh;
 		if (s) {
-			/* birden çok aygıtta çalışırken ölçümü son 300 ms içinde yazan örnek sürdürür */
+			/* birden çok aygıtta çalışırken ölçümü son 300 ms içinde yazan örnek sürdürür.
+			 * Dosya diskte kaldığı için önceki açılıştan kalan (şimdiden büyük) zaman damgası geçersizdir. */
 			const long owner = s->owner;
-			if (owner == id_ || now - s->owner_tick > 300) {
+			const int64_t ot = s->owner_tick;
+			if (owner == id_ || ot > now || now - ot > 300) {
 				if (owner != id_)
 					InterlockedExchange(&s->owner, id_);
 				s->owner_tick = now;
@@ -730,7 +744,7 @@ private:
 				if (a > p)
 					p = a;
 			}
-			if (p > acc_in_)
+			if (meter_ && p > acc_in_)
 				acc_in_ = p;
 
 			/* gereken kazanç */
@@ -772,7 +786,7 @@ private:
 			float gg = (float)(box_sum_ * invL);
 			if (gg > 1.0f)
 				gg = 1.0f;
-			if (gg < acc_g_)
+			if (meter_ && gg < acc_g_)
 				acc_g_ = gg;
 
 			/* gecikme hattı + emniyet tavanı */
@@ -790,13 +804,15 @@ private:
 			}
 			w_ = (w + 1) & MASK;
 
-			const float al = fabsf(fo[0]), ar = fabsf(fo[ch > 1 ? 1 : 0]);
-			if (al > acc_l_)
-				acc_l_ = al;
-			if (ar > acc_r_)
-				acc_r_ = ar;
-			if (++sub_n_ >= LV_SUB)
-				flushMeter(now);
+			if (meter_) {
+				const float al = fabsf(fo[0]), ar = fabsf(fo[ch > 1 ? 1 : 0]);
+				if (al > acc_l_)
+					acc_l_ = al;
+				if (ar > acc_r_)
+					acc_r_ = ar;
+				if (++sub_n_ >= LV_SUB)
+					flushMeter(now);
+			}
 		}
 		gain_lin_ = g_target;
 		/* kayan ortalama toplamı uzun sürede kayabilir: ara sıra yeniden eşitle */

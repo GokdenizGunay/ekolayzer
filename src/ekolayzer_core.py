@@ -6,7 +6,7 @@ import os
 import re
 import subprocess
 
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 APP_ID = "io.github.ekolayzer"
 NODE_NAME = "ekolayzer"
 CAPTURE_NODE = "effect_input." + NODE_NAME

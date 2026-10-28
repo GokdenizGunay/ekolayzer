@@ -8,6 +8,7 @@
  *
  * Arayüz -> motor: params (seqlock: seq tekken yazım sürüyor).
  * Motor -> arayüz: halka arabellekte her 256 örnekte bir seviye dilimi (Linux sürümüyle aynı).
+ * Ölçüm yalnızca arayüz reader_tick'i son 1 saniyede yenilediyse yapılır (pencere açık ve odakta).
  * C# karşılığı: app/Engine.cs (ofsetler birebir aynı olmalı).
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -47,7 +48,8 @@ struct EkzShared {
 	volatile int64_t owner_tick; /* 144: GetTickCount64 */
 	volatile int64_t alive_tick; /* 152: son işleme çağrısı */
 	volatile int64_t lock_tick;  /* 160: son işleme başlangıcı (LockForProcess) */
-	uint8_t pad2[88];          /* 168 .. 256 */
+	volatile int64_t reader_tick; /* 168: arayüz penceresi açık ve odaktayken yenilenir */
+	uint8_t pad2[80];          /* 176 .. 256 */
 	struct EkzSlot slot[EKZ_SLOTS]; /* 256 .. 1280 */
 };
 #pragma pack(pop)

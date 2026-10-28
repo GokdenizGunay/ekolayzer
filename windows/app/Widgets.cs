@@ -320,11 +320,27 @@ namespace Ekolayzer
                 if (Math.Abs(nv - cur) > 0.05 || Math.Abs(Holds[i] - hold) > 0.05) dirty = true;
                 Vals[i] = nv;
             }
-            if (dirty) Invalidate(MeterRect());
+            if (dirty) Invalidate(BarsRect());  // yalnızca ibreler yeniden çizilir
         }
 
         int TopH => Theme.S(20);
+
+        public void Clear()
+        {
+            Array.Clear(Vals, 0, Vals.Length);
+            Array.Clear(Holds, 0, Holds.Length);
+            Invalidate();
+        }
+
         Rectangle MeterRect() => new Rectangle(0, TopH, Width, Height - TopH - Theme.S(20));
+
+        /// <summary>İbrelerin (çubuklar ve tepe çizgisi) kapladığı alan.</summary>
+        Rectangle BarsRect()
+        {
+            int barsW = bars * Theme.S(9) + (bars - 1) * Theme.S(3);
+            var mr = MeterRect();
+            return new Rectangle((Width - (barsW + Theme.S(26))) / 2, mr.Y + Theme.S(7) - 2, barsW, mr.Height - Theme.S(13) + 4);
+        }
 
         public void SetTopText(string s)
         {
@@ -340,13 +356,19 @@ namespace Ekolayzer
             int barW = Theme.S(9), gap = Theme.S(3);
             int barsW = bars * barW + (bars - 1) * gap;
             int x0 = (Width - (barsW + Theme.S(26))) / 2;
-            Theme.Text(g, TopText, Theme.Caption, Theme.Mix(Theme.Fg, surf, 0.75), new Rectangle(0, 0, Width, TopH));
-            Theme.Text(g, Caption, Theme.CaptionBold, Theme.Fg, new Rectangle(0, Height - Theme.S(20), Width, Theme.S(20)));
+            // ibre yenilemesinde yazılar ve ölçek çizilmez
+            bool onlyBars = BarsRect().Contains(e.ClipRectangle);
+            if (!onlyBars)
+            {
+                Theme.Text(g, TopText, Theme.Caption, Theme.Mix(Theme.Fg, surf, 0.75), new Rectangle(0, 0, Width, TopH));
+                Theme.Text(g, Caption, Theme.CaptionBold, Theme.Fg, new Rectangle(0, Height - Theme.S(20), Width, Theme.S(20)));
+            }
 
             var mr = MeterRect();
             int top = mr.Y + Theme.S(7), bh = mr.Height - Theme.S(13);
             float Y(double depth) => top + (float)(Math.Min(Math.Max(depth, 0), span) / span * bh);
 
+            if (!onlyBars)
             using (var f = new Font("Segoe UI", 6.5f))
                 foreach (var mk in marks)
                 {

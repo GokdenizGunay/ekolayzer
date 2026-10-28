@@ -19,7 +19,7 @@ namespace Ekolayzer
 
     static class Core
     {
-        public const string Version = "1.4.1";
+        public const string Version = "1.4.2";
         public const string AppId = "io.github.ekolayzer";
         public const string Repo = "GokdenizGunay/ekolayzer";
 
